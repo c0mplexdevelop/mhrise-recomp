@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "nnsdk/ldn_net.h"
+#include "nnsdk/net_log.h"
 #include "nnsdk/watch.h"
 #include "nnsdk/types.h"
 
@@ -295,12 +296,14 @@ uint16_t network_game_port(int fd) { return nnsdk::ldn_net::game_port(network_po
 
 ssize_t send_to_network(int fd, const void* buf, size_t n, const sockaddr_in& to) {
     if (!is_datagram(fd)) return fail(ENETUNREACH);
-    nnsdk::ldn_net::send(network_game_port(fd), ntohl(to.sin_addr.s_addr), ntohs(to.sin_port), buf, n);
+    const uint16_t port = network_game_port(fd);
+    nnsdk::net_log::datagram(nnsdk::ldn_net::own_address(), port, ntohl(to.sin_addr.s_addr), ntohs(to.sin_port), buf, n);
+    nnsdk::ldn_net::send(port, ntohl(to.sin_addr.s_addr), ntohs(to.sin_port), buf, n);
     return static_cast<ssize_t>(n);
 }
 
 // A datagram from the helper: its header off (the data moves down) and its real sender in *ss. The received size.
-ssize_t from_network(void* buf, ssize_t r, sockaddr_storage* ss) {
+ssize_t from_network(int fd, void* buf, ssize_t r, sockaddr_storage* ss) {
     const auto& from = reinterpret_cast<const sockaddr_in&>(*ss);
     const uint16_t helper = nnsdk::ldn_net::helper_port();
     if (!helper || r < static_cast<ssize_t>(nnsdk::ldn_net::kDeliverHeader) || ss->ss_family != AF_INET ||
@@ -315,6 +318,8 @@ ssize_t from_network(void* buf, ssize_t r, sockaddr_storage* ss) {
     memcpy(ss, &real, sizeof real);
     const ssize_t size = r - static_cast<ssize_t>(nnsdk::ldn_net::kDeliverHeader);
     memmove(b, b + nnsdk::ldn_net::kDeliverHeader, static_cast<size_t>(size));
+    nnsdk::net_log::datagram(ntohl(real.sin_addr.s_addr), ntohs(real.sin_port), nnsdk::ldn_net::own_address(),
+                             network_game_port(fd), b, static_cast<size_t>(size));
     return size;
 }
 
@@ -393,7 +398,7 @@ ssize_t do_recvfrom(int fd, void* buf, size_t n, int flags, void* addr, unsigned
         tmp.resize(n + nnsdk::ldn_net::kDeliverHeader);
         ssize_t r = ::recvfrom(fd, tmp.data(), tmp.size(), host_msg_flags(flags), reinterpret_cast<sockaddr*>(&ss), &sl);
         if (r < 0) return r;
-        r = from_network(tmp.data(), r, &ss);
+        r = from_network(fd, tmp.data(), r, &ss);
         const size_t copied = std::min<size_t>(static_cast<size_t>(r), n);
         memcpy(buf, tmp.data(), copied);
         if (want) from_host_addr(ss, addr, len);
@@ -461,7 +466,7 @@ ssize_t do_recvmsg(int fd, MsgHdr* m, int flags) {
         socklen_t sl = sizeof ss;
         ssize_t r = ::recvfrom(fd, tmp.data(), tmp.size(), host_msg_flags(flags), reinterpret_cast<sockaddr*>(&ss), &sl);
         if (r < 0) return r;
-        r = from_network(tmp.data(), r, &ss);
+        r = from_network(fd, tmp.data(), r, &ss);
         size_t left = std::min<size_t>(static_cast<size_t>(r), total), at = 0;
         for (int k = 0; k < static_cast<int>(m->iovlen) && left; k++) {
             const size_t c = std::min(left, static_cast<size_t>(m->iov[k].iov_len));
