@@ -21,6 +21,8 @@ uint32_t own_address();
 bool in_network(uint32_t address);
 // The loopback port deliveries come from (0: none yet)
 uint16_t helper_port();
+// The network's NetworkInfo as the SDK lays it out (0x480 bytes) into out; false outside one. For the capture (net_log.h).
+bool network_info(uint8_t* out);
 // A datagram from one of the game's sockets (its local port) to an address in the network
 void send(uint16_t src_port, uint32_t dst_address, uint16_t dst_port, const void* data, size_t size);
 

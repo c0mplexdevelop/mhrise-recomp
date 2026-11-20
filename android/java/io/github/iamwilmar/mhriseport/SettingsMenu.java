@@ -697,7 +697,8 @@ final class SettingsMenu {
         flag("Capture Local Play",
                 "Writes every packet the game sends and gets in Local Play to netlog/local_play_<date>.txt in the game "
                         + "folder (time, sender, receiver, the bytes in hex). For comparing with other versions of the "
-                        + "game. Turn it off when done: the file grows fast.",
+                        + "game. Turn it on before starting the game (it also notes the game's encryption keys from the "
+                        + "start), and off when done: the file grows fast.",
                 "net_log", false);
         header("Bug report");
         note("For testers: stand where the problem shows, tap Capture this frame, wait a few seconds, then Save the "

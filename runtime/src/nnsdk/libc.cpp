@@ -14,6 +14,7 @@
 #include <cwchar>
 #include <cwctype>
 
+#include "nnsdk/net_log.h"
 #include "nnsdk/runtime.h"
 
 namespace {
@@ -34,6 +35,7 @@ void start_cheats();  // cheats.cpp
 extern "C" void nnsdk_attach(const NnsdkHost* host) {
     g_host = *host;
     nnsdk::start_cheats();
+    if (nnsdk::ini::on("net_log") && g_host.main_base) nnsdk::net_log::hook_keys(g_host.main_base);
 }
 
 // El crt0 de cada módulo la llama desde DT_INIT con sus tablas; si no devuelve 1, el

@@ -1199,6 +1199,13 @@ bool active() {
     return (s == State_AccessPointCreated || s == State_StationConnected) && g_address != 0;
 }
 
+bool network_info(uint8_t* out) {
+    if (!active()) return false;
+    std::lock_guard lock(g_mu);
+    memcpy(out, g_info.data(), kInfoSize);
+    return true;
+}
+
 uint32_t own_address() { return active() ? g_address : 0; }
 
 bool in_network(uint32_t address) {
