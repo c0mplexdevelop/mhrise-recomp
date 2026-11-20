@@ -28,6 +28,7 @@
 //   BYE     both ways        u32 reason
 //   PING    both ways
 //   REJECT  host -> station  u32 reason
+//   KEY     host -> station  u8 have, key[16]: Pia's packet key, for a bridge (HELLO's "query only" byte = 2)
 //
 // MakeIpv4Address is called by ~6000 of the game's static constructors, before nnMain and nnsdk_attach: it can't
 // depend on anything.
@@ -58,6 +59,7 @@
 #include <vector>
 
 #include "nnsdk/ldn_net.h"
+#include "nnsdk/net_log.h"
 #include "nnsdk/os.h"
 #include "nnsdk/types.h"
 
@@ -368,7 +370,7 @@ std::vector<uint8_t> server_header(const std::array<uint8_t, 16>& room) {
 
 // ---- link frames ------------------------------------------------------------------------------------------------------
 
-enum : uint8_t { kHello = 1, kWelcome = 2, kInfoFrame = 3, kData = 4, kBye = 5, kLinkPing = 6, kReject = 7 };
+enum : uint8_t { kHello = 1, kWelcome = 2, kInfoFrame = 3, kData = 4, kBye = 5, kLinkPing = 6, kReject = 7, kKey = 8 };
 constexpr size_t kDataHeader = 12;
 
 struct Link {
@@ -557,7 +559,8 @@ void host_serve(int fd, uint64_t generation) {
         ::close(fd);
         return;
     }
-    const bool query = p[4] != 0;
+    const bool query = p[4] == 1;
+    const bool bridge = p[4] == 2;  // a station that isn't a Switch game (PC bridge): it gets Pia's key
     if (query) {  // a search: the network, then goodbye
         Info info;
         {
@@ -609,6 +612,12 @@ void host_serve(int fd, uint64_t generation) {
     link->send(kWelcome, welcome);
     printf("[ldn] player %d joined (%u.%u.%u.%u)\n", link->node, link->address >> 24, link->address >> 16 & 255,
            link->address >> 8 & 255, link->address & 255);
+    if (bridge) {
+        std::vector<uint8_t> k(17, 0);
+        k[0] = nnsdk::net_log::session_key(k.data() + 1) ? 1 : 0;
+        link->send(kKey, k);
+        printf("[ldn] bridge station: key %s\n", k[0] ? "sent" : "not known (Capture Local Play off at start-up?)");
+    }
     broadcast_info();
     while (g_generation == generation && link->open) {
         if (!read_frame(fd, &type, &p, kMaxLinkFrame, 30000)) break;

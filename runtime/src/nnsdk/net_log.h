@@ -38,6 +38,8 @@ struct State {
     std::vector<std::string> keys;  // "key hex, mode, caller" lines, all of them since start-up
     size_t keys_written = 0;        // how many of them the current file has
     std::vector<uint8_t> info;      // the NetworkInfo last written
+    uint8_t session_key[16] = {};   // the key Pia gave its packet cipher, last time (see session_key())
+    bool have_session_key = false;
 };
 
 inline State& state() {
@@ -150,6 +152,11 @@ extern "C" inline uint64_t net_log_key_schedule(void* ctx, const uint8_t* key, u
                  static_cast<unsigned long>(caller));
         State& s = state();
         std::lock_guard lock(s.m);
+        // The packets' key is the one that arrives from these two callers (16.0.1; same in both captures so far)
+        if (len == 16 && (caller == 0x24d9cb0 || caller == 0x24d9ae4)) {
+            memcpy(s.session_key, key, 16);
+            s.have_session_key = true;
+        }
         bool seen = false;
         for (const std::string& k : s.keys) seen |= k == line;
         if (!seen && s.keys.size() < 256) {
@@ -196,6 +203,16 @@ inline void hook_keys(const uint8_t* main_base) {
     mprotect(first, span, PROT_READ | PROT_EXEC);
     __builtin___clear_cache(reinterpret_cast<char*>(target), reinterpret_cast<char*>(target + 16));
     printf("[net_log] logging Pia's AES keys\n");
+}
+
+// The key the game's Pia is using for this session's packets, once it has been seen (only while the key hook is
+// on, i.e. Capture Local Play was on at start-up). A bridge station needs it to make packets the game accepts.
+inline bool session_key(uint8_t out[16]) {
+    State& s = state();
+    std::lock_guard lock(s.m);
+    if (!s.have_session_key) return false;
+    memcpy(out, s.session_key, 16);
+    return true;
 }
 
 }  // namespace nnsdk::net_log
