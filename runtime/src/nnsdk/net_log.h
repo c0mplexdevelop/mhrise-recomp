@@ -6,8 +6,7 @@
 //
 // Pia encrypts them (AES-GCM, the 0x80 in the version byte), so the file also gets what's needed to take that off
 // afterwards: the network's session id, its players' MACs and advertise data (the nonce is made from them), and every
-// AES key the game expands while net_log is on at start-up (hook_keys: Pia's key schedule, main+0x24dab50, logs its
-// key and caller, then runs as it was).
+// AES key the game expands while net_log is on at start-up (note_key, from pia_key.h's hook on Pia's key schedule).
 #pragma once
 
 #include <sys/mman.h>
@@ -38,8 +37,6 @@ struct State {
     std::vector<std::string> keys;  // "key hex, mode, caller" lines, all of them since start-up
     size_t keys_written = 0;        // how many of them the current file has
     std::vector<uint8_t> info;      // the NetworkInfo last written
-    uint8_t session_key[16] = {};   // the key Pia gave its packet cipher, last time (see session_key())
-    bool have_session_key = false;
 };
 
 inline State& state() {
@@ -139,80 +136,20 @@ inline void datagram(uint32_t src, uint16_t src_port, uint32_t dst, uint16_t dst
 
 // ---- Pia's AES keys -------------------------------------------------------------------------------------------------
 
-inline const uint8_t* g_main = nullptr;
-inline uint64_t (*g_key_schedule)(void*, const uint8_t*, uint32_t, uint32_t) = nullptr;  // the original, moved
-
-extern "C" inline uint64_t net_log_key_schedule(void* ctx, const uint8_t* key, uint32_t len, uint32_t mode) {
-    const auto caller = reinterpret_cast<uintptr_t>(__builtin_return_address(0)) - reinterpret_cast<uintptr_t>(g_main);
-    if (key && len && len <= 32) {
-        char line[160];
-        int n = 0;
-        for (uint32_t k = 0; k < len; k++) n += snprintf(line + n, sizeof line - n, "%02x", key[k]);
-        snprintf(line + n, sizeof line - n, " (%u bytes, mode %u, from main+%#lx)", len, mode,
-                 static_cast<unsigned long>(caller));
-        State& s = state();
-        std::lock_guard lock(s.m);
-        // The packets' key is the one that arrives from these two callers (16.0.1; same in both captures so far)
-        if (len == 16 && (caller == 0x24d9cb0 || caller == 0x24d9ae4)) {
-            memcpy(s.session_key, key, 16);
-            s.have_session_key = true;
-        }
-        bool seen = false;
-        for (const std::string& k : s.keys) seen |= k == line;
-        if (!seen && s.keys.size() < 256) {
-            s.keys.emplace_back(line);
-            printf("[net_log] AES key %s\n", line);
-        }
-    }
-    return g_key_schedule(ctx, key, len, mode);
-}
-
-// main+0x24dab50 starts str x22, [sp, #-0x30]!; stp x21, x20, [sp, #0x10]; stp x19, x30, [sp, #0x20]; mov w22, w2:
-// nothing that depends on where it runs, so the four go to a trampoline that jumps back after them, and their place
-// gets a jump to net_log_key_schedule. Only for 16.0.1 (the bytes are checked first).
-inline void hook_keys(const uint8_t* main_base) {
-    static const uint32_t kOriginal[4] = {0xf81d0ff6, 0xa90153f5, 0xa9027bf3, 0x2a0203f6};
-    auto* target = const_cast<uint8_t*>(main_base) + 0x24dab50;
-    if (memcmp(target, kOriginal, sizeof kOriginal) != 0) {
-        printf("[net_log] Pia's key schedule isn't where 16.0.1 has it: keys won't be logged\n");
-        return;
-    }
-    auto* tramp = static_cast<uint32_t*>(mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    if (tramp == MAP_FAILED) return;
-    memcpy(tramp, kOriginal, sizeof kOriginal);
-    tramp[4] = 0x58000050;  // ldr x16, #8
-    tramp[5] = 0xd61f0200;  // br x16
-    const uint64_t back = reinterpret_cast<uint64_t>(target + 16);
-    memcpy(tramp + 6, &back, 8);
-    mprotect(tramp, 4096, PROT_READ | PROT_EXEC);
-    __builtin___clear_cache(reinterpret_cast<char*>(tramp), reinterpret_cast<char*>(tramp + 8));
-    g_main = main_base;
-    g_key_schedule = reinterpret_cast<decltype(g_key_schedule)>(tramp);
-
-    uint32_t jump[4] = {0x58000050, 0xd61f0200};
-    const uint64_t to = reinterpret_cast<uint64_t>(&net_log_key_schedule);
-    memcpy(jump + 2, &to, 8);
-    const uint64_t page = static_cast<uint64_t>(sysconf(_SC_PAGESIZE));
-    auto* first = reinterpret_cast<uint8_t*>(reinterpret_cast<uint64_t>(target) & ~(page - 1));
-    const size_t span = static_cast<size_t>(target + 16 - first + page - 1) & ~(page - 1);
-    if (mprotect(first, span, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
-        printf("[net_log] can't patch main's code: keys won't be logged\n");
-        return;
-    }
-    memcpy(target, jump, sizeof jump);
-    mprotect(first, span, PROT_READ | PROT_EXEC);
-    __builtin___clear_cache(reinterpret_cast<char*>(target), reinterpret_cast<char*>(target + 16));
-    printf("[net_log] logging Pia's AES keys\n");
-}
-
-// The key the game's Pia is using for this session's packets, once it has been seen (only while the key hook is
-// on, i.e. Capture Local Play was on at start-up). A bridge station needs it to make packets the game accepts.
-inline bool session_key(uint8_t out[16]) {
+// Every key Pia expands (pia_key.h hooks its key schedule and calls this), with its caller in main
+inline void note_key(const uint8_t* key, uint32_t len, uint32_t mode, uintptr_t caller) {
+    char line[160];
+    int n = 0;
+    for (uint32_t k = 0; k < len; k++) n += snprintf(line + n, sizeof line - n, "%02x", key[k]);
+    snprintf(line + n, sizeof line - n, " (%u bytes, mode %u, from main+%#lx)", len, mode, static_cast<unsigned long>(caller));
     State& s = state();
     std::lock_guard lock(s.m);
-    if (!s.have_session_key) return false;
-    memcpy(out, s.session_key, 16);
-    return true;
+    bool seen = false;
+    for (const std::string& k : s.keys) seen |= k == line;
+    if (!seen && s.keys.size() < 256) {
+        s.keys.emplace_back(line);
+        printf("[net_log] AES key %s\n", line);
+    }
 }
 
 }  // namespace nnsdk::net_log

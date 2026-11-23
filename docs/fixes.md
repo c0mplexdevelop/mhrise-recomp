@@ -9,7 +9,7 @@ where one exists, so the old behaviour can be compared.
 The main scenery pixel shaders compute their own derivatives with `SHFL.BFLY` by 1 and 2. Eden translated those to
 `OpGroupNonUniformShuffleXor`, which Vulkan doesn't guarantee to run for helper invocations, so pixels on triangle
 edges read garbage. Butterflies by 1..3 in pixel shaders are now quad swaps, which always include helper invocations
-(`tools/patches/eden-quad-butterfly.patch`, cache key version 3). Early on this was wrongly ruled out after counting
+(the quad-butterfly change in `runtime/eden`, cache key version 3). Early on this was wrongly ruled out after counting
 the wrong SPIR-V opcode: `OpGroupNonUniformShuffleXor` is 346, `QuadBroadcast` 365, `QuadSwap` 366.
 
 **Endemic life, wirebugs and some lights invisible but still gatherable** (also on Eden).
@@ -97,7 +97,7 @@ mixed each time. It's now one continuous queue (`audio_cola.h`).
 - **First-use freezes on Turnip:** every compute shader went through spirv-opt, which took 4.3 s for 4 new shaders the
   first time an attack used them (plus 1.5 s of their pipelines). That was a fix for Qualcomm's own compiler; on Mesa
   drivers only compute shaders with a switch (BRX) go through it now (`spirv_opt_compute` restores the old rule).
-- **BC textures as ASTC on Mali** (`bc_astc`, off by default until tested): 2-8 times less texture memory traffic
+- **BC textures as ASTC on drivers without BC** (`bc_astc`, off by default until tested; BC1, and BC2/BC3 with one alpha per block, convert without the encoder): 2-8 times less texture memory traffic
   than RGBA8. The first load of each texture is slower (CPU encode); the cache in the data folder makes the next ones a
   file read.
 - **BC textures on Mali and PowerVR:** BC1–BC5 are decoded on the GPU (`no_gpu_bc`), so loading and streaming no longer

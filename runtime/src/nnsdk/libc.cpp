@@ -14,7 +14,9 @@
 #include <cwchar>
 #include <cwctype>
 
+#include "nnsdk/ini.h"
 #include "nnsdk/net_log.h"
+#include "nnsdk/pia_key.h"
 #include "nnsdk/runtime.h"
 
 namespace {
@@ -35,7 +37,11 @@ void start_cheats();  // cheats.cpp
 extern "C" void nnsdk_attach(const NnsdkHost* host) {
     g_host = *host;
     nnsdk::start_cheats();
-    if (nnsdk::ini::on("net_log") && g_host.main_base) nnsdk::net_log::hook_keys(g_host.main_base);
+    // One hook on Pia's key schedule for both: the network's key for PC players (crossplay.md; <data>/no_pc_players:
+    // not kept) and every key for the Local Play capture (net_log at start-up)
+    const bool pc = !nnsdk::ini::on("no_pc_players"), capture = nnsdk::ini::on("net_log");
+    if (capture) nnsdk::pia_key::g_observer = &nnsdk::net_log::note_key;
+    if (g_host.main_base && (pc || capture)) nnsdk::pia_key::hook(g_host.main_base, pc);
 }
 
 // El crt0 de cada módulo la llama desde DT_INIT con sus tablas; si no devuelve 1, el

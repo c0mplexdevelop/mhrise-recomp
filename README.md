@@ -136,7 +136,7 @@ may stutter while its shaders are translated and compiled; they are cached for t
 
 ## Options
 
-The in-game settings menu (the gear of the touch controls) sets the common ones by section; choices with more than two options open a drop-down, and Display > Menu size scales the menu's text: **Display** (base
+The in-game settings menu (the gear of the touch controls) sets the common ones by section; choices with more than two options open a drop-down, and the menus start at a size that fits the screen, which Display > Menu size scales (the MOD UI too): **Display** (base
 resolution, dynamic resolution, FSR, FPS limit, FPS counter), **Graphics** (shadows, texture arrays, anisotropic filtering), **GPU driver** (the system's or one of your own), **Frame generation** (on/off, generator, Quality Preset, Lossless.dll),
 **Performance** (performance hints, fast cores, low memory, shader warm-up, pipelines on one thread), and the touch
 controls, combos and controller. Underneath, each is a `name = value` line (`1` is on) in `mhr.ini` in your data
@@ -162,7 +162,9 @@ with adb); changing that setting in the menu moves it into the ini.
 | `pipeline_threads_1`, `pipeline_threads_3`, `pipeline_threads_4` | Pipeline worker threads (Settings → Performance, 2 by default): how many background threads build pipelines, like Eden's setting. Next start. |
 | `async_present` | Asynchronous presentation (Settings → Performance, off by default): the frame is put on screen (swapchain image, frame generation, present) by a thread of its own, so NvnSubmit goes on with the next frame's command lists. At most one frame behind. Applies at once. |
 | `system_bars` | Show Android's bars (Settings → Display): keeps the status and navigation bars on screen. By default both are hidden while playing (a swipe in from the edge shows them for a moment), so three-button navigation no longer sits over the game. |
+| `touch_gpu` | Draw controls with the GPU (Settings → Display): the touch controls and the capture button drawn by the GPU through Android's RenderThread (`1`), or by the CPU (`0`). Mali's GLES driver crashed on that thread while hunting (the game itself runs on Vulkan and was fine), so without it they're drawn by the CPU on MediaTek and Exynos chips and by the GPU elsewhere. Next start. |
 | `tight_barriers` | Skip empty GPU barriers (Settings → Performance, off by default): the full barriers with nothing recorded since the previous one (about half of the ~250 a frame) are skipped; each still drained the GPU on Turnip. Live. |
+| `fast_textures` | Speed over accuracy (Settings → Performance → Fast textures, off by default): set 1's textures cached by where the game keeps their handles, through texture uploads; CPU-rewritten textures checked every other frame. Blood as big patches, magnified particles or a texture a frame late can come back. Live. |
 | `dynamic_state`, `vertex_input_state` | Extended dynamic state and vertex input dynamic state (Settings → Graphics → Extensions, shown only where the driver has `VK_EXT_extended_dynamic_state` / `VK_EXT_vertex_input_dynamic_state`; off by default). The first sets cull mode, front face, depth test/write/compare and the stencil test and ops per draw; the second the vertex attributes' formats and the streams' strides and step rates. Either way, far fewer pipelines to build and switch. At start-up. |
 | `no_adpf` | No Android performance hints (Android 13+: the frame's threads report their work each frame so the system raises the clocks in time). Live. |
 | `no_affinity` | Doesn't pin the frame's three threads to the fast cores (they're only pinned when the phone has at least three fast cores). Live. |
@@ -175,6 +177,7 @@ with adb); changing that setting in the menu moves it into the ini.
 | `effects_lower`, `effects_lowest` | Experimental. The Renderer's ReducedTransparentBuffer one or two steps above the game's 2 (up to 4): particles and other see-through effects drawn into a smaller buffer. Graphics → Effects resolution. Live. |
 | `no_ao` | Experimental. The Renderer's GeometryAOQuality at 0 (the game uses 1). Graphics → Ambient occlusion. Live. |
 | `shadow_half`, `shadow_quarter` | Shadow maps at half or a quarter of the game's own size (never below 256), through the game's own shadow setting (the PC version's shadow quality). Blurrier edges, much less GPU work. Live. MH Rise 16.0.1 only. |
+| `tess_accurate`, `no_tess` | Tessellation of the terrain (Effects → Tessellation). Neither (Fast): as isolines, the cheap way the port first drew it, most of the detail missing; on ARM's older drivers, whose compiler aborts the game on that, those draws are skipped instead. `tess_accurate`: in its domain, as the game means it (more GPU work). `no_tess`: those draws are skipped. Next start. |
 | `model_detail_low`, `model_detail_lowest`, `model_detail_min`, `model_detail_high` | Scales the game's mesh LOD rate (the PC version's mesh quality) by 0.75, 0.5, 0.25 or 1.5. Live. MH Rise 16.0.1 only. |
 | `texture_bias_1`, `texture_bias_2` | The texture streamer skips one or two more of the largest mip levels (the game's TextureLoadLevelBias). Live. MH Rise 16.0.1 only. |
 | `60fps` | Unlocks 60 fps mode (needs a strong GPU: most phones won't hold it in hunts). |
@@ -196,7 +199,7 @@ with adb); changing that setting in the menu moves it into the ini.
 | `count_check`, `no_count_check` | On by default on drivers without `VK_KHR_draw_indirect_count` (ARM's on a Dimensity 720), each GPU-counted multi-draw is still drawn up to its maximum, but the vertex shader reads the count the game's culling wrote and drops the draws past it (`nvn/count_check.h`): it reads it as the draw runs, so nothing is copied or fixed before the pass. Removes the stretched triangles of drawing them all. `no_count_check` turns it off. Graphics → Exact draw counts (Mali). |
 | `no_count_fallback` | On drivers without `VK_KHR_draw_indirect_count` (old Vulkan 1.1 ones, such as ARM's on a Dimensity 720), skips the game's GPU-counted multi-draws as before instead of drawing them all. Without the fallback the world is missing there. |
 | `adreno_turbo` | Keeps an Adreno at its top GPU clock while the game is in front (libadrenotools' turbo, no root). Hotter, more battery; thermal limits still apply. Performance → GPU boost, shown on Adreno only. Live. |
-| `bc_astc` | On GPUs without BC textures (Mali), stores BC1/BC2/BC3/BC7 textures as ASTC 4x4 instead of RGBA8: 2-8 times less memory and bandwidth. BC1 (the most common) is converted block for block with no encoder, as fast as a copy; BC2, BC3 and BC7 are encoded on the CPU the first time (ARM's astcenc), then read from the app's own storage (`/data/data/<app>/files/astc_cache`; Graphics → Clear the ASTC cache empties it). Graphics → Textures as ASTC. Read at start-up. |
+| `bc_astc` | On drivers without BC textures (most Mali and PowerVR ones; the setting only shows there), stores BC1/BC2/BC3/BC7 textures as ASTC 4x4 instead of RGBA8: 2-8 times less memory and bandwidth. BC1 (the most common), and BC2/BC3 whose alpha is one value per block, convert block for block with no encoder, as fast as a copy; other BC2, BC3 and BC7 are encoded on the CPU the first time (ARM's astcenc; a big level is encoded on the GPU at once meanwhile, `shaders/astc_encode.comp`, unless `cpu_astc`), then read from the app's own storage (`/data/data/<app>/files/astc_cache`; Graphics → Clear the ASTC cache empties it). Graphics → Textures as ASTC. Read at start-up. |
 | `astc_cache_in_data_folder` | Keeps the ASTC cache in `<data>/astc_cache/` instead of the app's own storage (slower to open through Android's shared storage, but it survives reinstalling and can be copied). Read at start-up. |
 | `no_gpu_bc` | On GPUs without BC textures (Mali, PowerVR), decodes BC1-BC5 on the CPU as before instead of with a compute shader. Live. |
 | `spirv_opt_compute` | On Mesa drivers (Turnip, PanVK), runs every compute shader through spirv-opt as before, not just those with a switch. That cost seconds of freeze the first time a new attack or effect appeared. Read when shaders are translated. |
@@ -208,6 +211,7 @@ with adb); changing that setting in the menu moves it into the ini.
 | `net_log` | Every Local Play packet the game sends and receives, written to `netlog/local_play_<date>.txt` (time, addresses, the bytes in hex and ASCII). Debug → Capture Local Play. Live. |
 | `perf_stats` | The profile lines ("perfil …": where the port's CPU time goes) every 10 seconds, without the rest of `verbose_log`. Debug → Performance stats. Live. |
 | `no_return_mali` | On Mali GPUs (ARM's driver and PanVK), the impossible branch Eden leaves after a switch is written as a plain return instead of an "unreachable", as on Qualcomm's driver, so the compiler can't make assumptions from it in the skinning shaders. This puts the "unreachable" back. Read at start-up. |
+| `pack_half_fix`, `no_pack_half_fix` | On ARM's older Mali drivers (the ones without draw-indirect-count, like a Mali-G57's or G68's), a vertex shader's float-to-half conversions (packHalf2x16, and F2F.F16.F32) are built from integer operations: that driver's compiler failed on it ("LLVM ERROR: Cannot select" in the log) and closed the game mid-hunt. Newer Mali drivers keep the single instruction. `pack_half_fix` forces it on any Mali, `no_pack_half_fix` turns it off. Read at start-up. |
 | (no switch) | 24-bit depth on GPUs without it (AMD-based ones such as Samsung's Xclipse have no DEPTH24_STENCIL8): the image is made as 32-bit float depth instead. Without that, every pass with the game's main depth buffer failed to start and its draws were skipped. |
 | `no_demote_reorder` | On Samsung Xclipse and AMD GPUs, pixel discards are gathered into one at the end of each shader, as Eden does there: their compilers mishandle an early discard, and alpha-tested scenery (foliage, smoke, cliff edges) came out as big flat brown sheets. This turns that off. `demote_reorder` forces it on any GPU. Read at start-up. |
 | `no_safe_translation` | Turns off the automatic retry for pipelines a driver rejects. Normally, when a driver refuses one (Qualcomm's own driver does with many of the scene's pixel shaders on newer Adrenos), its vertex and pixel shaders are translated again more conservatively, step by step (no NonUniform marking, then also optimized by spirv-opt, then also without subgroup operations), and the first that works is kept and remembered for the warm-up. |
@@ -225,6 +229,11 @@ in Local Play and it's listed there; search for hubs and the ones listed show up
 server connects the players and passes their traffic. Only MH Rise hubs are listed for MH Rise (the server keeps each
 game's hubs apart), so this isn't crossplay with MHGU.
 
+The game's packets go by UDP when it gets through (through the hub server's UDP relay, or straight to the host's port
+on a direct join), and by the TCP connection when it doesn't: a lost packet on TCP holds up the ones behind it, which
+shows as hitches in a hunt. The log says which: "UDP through the hub server" when joining. Hubs of earlier versions of
+the port (without UDP) aren't listed for this one; everyone needs the same version.
+
 Settings, under **Multiplayer** in the settings panel (saved as text files in the game folder):
 
 | Setting | File | |
@@ -232,7 +241,7 @@ Settings, under **Multiplayer** in the settings panel (saved as text files in th
 | Matchmaking key | `hub_key` | Players with the same key only see each other's hubs; empty, public. Only its SHA-256 is sent. |
 | Hub servers | `hub_servers` | One `host[:port]` per line; `#` in front keeps it in the list switched off. Missing: the default. `off`: none. |
 | Search hosts | `hub_hosts` | Other phones' `IP[:port]`, asked directly for their hub (same Wi-Fi, or a forwarded port). |
-| Port | `hub_port` | The TCP port a created hub listens on for direct joins (default 39510, 0 off). |
+| Port | `hub_port` | The port a created hub listens on for direct joins, TCP and UDP (default 39510, 0 off). |
 
 The hub servers' protocol is the one documented in MHGU for Android's `server/`; the client here is this port's own
 code (`runtime/src/nnsdk/ldn.cpp`), with its own link protocol between the players.
@@ -269,6 +278,10 @@ tools/build_apk.sh   # builds build/mhriseport.apk
 adb install -r build/mhriseport.apk
 ```
 
+`LUA_LAB=1 tools/build_apk.sh` adds the Lua runtime for mods (CMake fetches Lua, Dear ImGui, FreeType and JSON for
+Modern C++, and the build fetches libarchive-android for rar/7z archives); the CI builds and the releases are made that
+way. `tools/build_ffmpeg.sh` first gives it FFmpeg's MP4 demuxer for some of the cutscenes.
+
 `ANDROID_HOME` selects the SDK (default `~/Library/Android/sdk`). The APK is signed with the Android debug key unless you
 pass `KEYSTORE=… KS_PASS=…`. `RELEASE=1` makes the build for players: `-O3` without debug info, unused code and duplicate
 functions removed, symbols stripped, and an APK that isn't debuggable. Releases are built that way by the `release`
@@ -303,7 +316,9 @@ Settings → **Saves** handles the save in the data folder's `save/`, which is i
   save that was here goes to `save_backups/` first (the last 10 are kept, **Restore a backup** brings one back). The game
   closes right after, since it still has the old save loaded and would write it back.
   Plain save files from another release (the Netflix one) or from a save editor are filled into this save's layout
-  the same way.
+  the same way, so a save of this version has to be there first: start the game, make a hunter and save once, then
+  import (the backups count too). Don't copy the other release's files into `save/` by hand; the game crashes on them.
+  When the imported save has its own hunter list (`data00-1.bin`), the old save's other hunter slots go as well.
 - **Export for Steam**: the save converted to the PC version's, photos included, in `win64_save/`, to copy into Steam's
   `...\1446780\remote\win64_save` (with the game closed, and Steam Cloud off for it, or it may bring the old one back).
   It's encrypted for the account under **Steam account**.
@@ -324,6 +339,16 @@ gives every value both have. Have a save of your own on the target side for the 
 
 The port itself is [IamWilmar](https://github.com/IamWilmar)'s work; this fork builds on it. If you'd like to thank
 him, he has a Ko-fi at [ko-fi.com/iamwilmar](https://ko-fi.com/iamwilmar).
+
+The Lua scripting for mods, PC mod import (resource and Lua mods, zip, rar and 7z), the Chinese menus, and the fixes
+for blood splashes turning into big patches and some collision particles drawn hugely magnified come from
+[yun-wulian](https://github.com/yun-wulian)'s fork, [yun-wulian/mhrise-recomp](https://github.com/yun-wulian/mhrise-recomp)
+(its commits up to 2026-11-22, merged with their history). Their NVN/Vulkan resource work behind those fixes came
+with it.
+
+Textures as ASTC converts BC2/BC3 blocks whose alpha is a single value straight to ASTC, without the encoder, after the
+same idea in GameNative's Mesa wrapper (MIT), and encodes the other big ones on the GPU as they load, as that wrapper's
+upload path does (`shaders/astc_encode.comp`, written for this project from the ASTC specification).
 
 ## License
 
@@ -364,6 +389,31 @@ and the first files it served (`[fs] mod file:`). Your game folder is never chan
 Settings → **Mods & cheats** does the same from the app: **Add a mod (.zip)** takes a zip made for Eden or Yuzu (it
 finds the `romfs`/`cheats` folders inside, or a bare `natives/...` tree), and each mod gets an on/off row and can be
 removed. `exefs` patches aren't used.
+
+### Lua scripts
+
+Builds with the Lua runtime (the releases; `LUA_LAB=1` in [Building](#building)) also run REFramework-style Lua mods:
+the PC version's `reframework/autorun/*.lua` scripts, with their `reframework/data` files. **Add a mod** takes a PC mod's
+archive (zip, rar or 7z) and puts its scripts and resource files where the game reads them. How much of a script works
+depends on which REFramework calls it uses: the common ones (hooks on the game's methods, singletons, managed objects,
+on-frame windows and ImGui) are there, not all of them. Settings → **Mods & cheats** → **MOD UI** opens the scripts'
+own windows, and so do **L3 + R3** on a controller (REFramework's own shortcut; Mods & cheats → MOD UI controller
+hotkey sets another, up to three buttons) and the **MOD** touch control, which shows up with scripts installed (Edit
+layout moves it, changes its look or hides it like any other control); Debug → **Lua / TDB** shows what the scripts did at start-up. This is
+[yun-wulian](https://github.com/yun-wulian)'s work (see Credits).
+
+The imgui table has REFramework's whole list of widgets except its draw lists, font loading and ImGuizmo (tables,
+menus, child windows, list boxes, color edits, drag_float2-4, scrolling, style colors…). A call a script makes that
+isn't here yet does nothing instead of stopping the script, and the log and Lua / TDB name it once, with the script
+and line: that list is what to add next. Debug → **Object Explorer** (`object_explorer` in mhr.ini) adds REFramework's
+explorer to the MOD UI, for writing scripts: search the game's types by name, see their fields (with offsets) and
+methods, open a manager's instance and read its fields live, and call its getters.
+
+Overlay mods made for **REFramework D2D** (cursey's [reframework-d2d](https://github.com/cursey/reframework-d2d) plugin,
+MIT) work too: its `d2d` Lua API (`register`, text and `Font`/`measure`, rectangles, rounded rectangles, quads,
+lines, circles and ovals, pies and rings, `Image` from a mod's `reframework/images`, `surface_size`) is written again
+here on the MOD UI's overlay, so the plugin's Windows DLL isn't needed (an import skips it). Text uses the MOD UI's
+font at the size asked; a font file a mod brings isn't loaded.
 
 ### Cheats
 

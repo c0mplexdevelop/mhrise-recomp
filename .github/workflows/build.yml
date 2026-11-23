@@ -27,6 +27,11 @@ jobs:
         run: bash tools/setup.sh
       - name: Runtime compute shaders
         run: bash tools/shaders.sh
+      - name: Mod archive library cache
+        uses: actions/cache@v4
+        with:
+          path: build/mod-dependencies
+          key: mod-dependencies-${{ hashFiles('tools/mod_archive_dependency.py') }}
       - name: FFmpeg cache
         uses: actions/cache@v4
         with:
@@ -34,10 +39,29 @@ jobs:
           key: ffmpeg-android-${{ hashFiles('tools/build_ffmpeg.sh') }}
       - name: FFmpeg (video fallback)
         run: bash tools/build_ffmpeg.sh
+      # (the netlog branch: the optimized build like a release's, signed with the release key when the secrets are
+      # there so it installs over a release, and the benchmark-named copies too; only as an artifact, no release)
       - name: Build APK
-        run: bash tools/build_apk.sh
+        env:
+          LUA_LAB: '1'
+          KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.RELEASE_KS_PASS }}
+        run: |
+          if [ "$GITHUB_REF_NAME" = netlog ]; then
+            export RELEASE=1
+            if [ -n "$KEYSTORE_B64" ] && [ -n "$KS_PASS" ]; then
+              echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+              export KEYSTORE="$RUNNER_TEMP/release.jks" KEY_ALIAS=recomp
+            fi
+            bash tools/build_apk.sh
+            APK_OUT=build/mhriseport-antutu.apk PACKAGE=com.antutu.ABenchMark LABEL="MH Rise port (AnTuTu)" bash tools/build_apk.sh
+            APK_OUT=build/mhriseport-ludashi.apk PACKAGE=com.ludashi.benchmark LABEL="MH Rise port (Ludashi)" bash tools/build_apk.sh
+            rm -f "$RUNNER_TEMP/release.jks"
+          else
+            bash tools/build_apk.sh
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: mhriseport
-          path: build/mhriseport.apk
+          path: build/mhriseport*.apk
           if-no-files-found: error

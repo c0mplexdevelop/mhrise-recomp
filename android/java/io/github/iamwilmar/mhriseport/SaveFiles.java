@@ -38,7 +38,7 @@ import java.util.zip.ZipOutputStream;
 final class SaveFiles {
     private SaveFiles() {}
 
-    static final String[] MAIN = {SaveData.SLOT, SaveData.SYSTEM};
+    static final String[] MAIN = {SaveData.SLOTS[0], SaveData.SLOTS[1], SaveData.SLOTS[2], SaveData.SYSTEM};
     private static final int KEEP_BACKUPS = 10;
 
     static File saveDir(File data) {
@@ -157,7 +157,7 @@ final class SaveFiles {
     // Every main file it has, opened; a Steam one with the IDs it gave, the one remembered and the one typed in (0 if
     // none). Throws SaveData.Citrus.NeedId when its ID isn't among them.
     static Map<String, SaveData.Opened> open(Context c, Incoming in, File data, long typed) throws IOException {
-        if (in.files.isEmpty()) throw new IOException("no data001Slot.bin or data00-1.bin in it");
+        if (in.files.isEmpty()) throw new IOException("no save files in it (data00-1.bin, data001Slot.bin...)");
         Ini ini = new Ini(data);
         List<Long> ids = new ArrayList<>();
         if (typed != 0) ids.add(typed);
@@ -181,6 +181,7 @@ final class SaveFiles {
                 ini.set("steam_id", Long.toString(o.steamId));
                 ini.set("steam_curve", Integer.toString(curve));
             }
+            o.drop();  // (each is parsed again when it's converted: see SaveData.Opened.roots)
             out.put(f.getKey(), o);
         }
         return out;
@@ -195,33 +196,54 @@ final class SaveFiles {
         }
     }
 
+    // The layout a converted file is filled into: the port's own save's file, or another slot's (same layout), or one in
+    // the backups if the save folder has none the Switch's way (another release's files copied in by hand, say)
     private static List<SaveData.Root> current(File data, String name) {
-        File f = new File(saveDir(data), name);
+        List<File> dirs = new ArrayList<>();
+        dirs.add(saveDir(data));
+        dirs.addAll(backups(data));
+        for (File dir : dirs) {
+            List<SaveData.Root> r = switchRoots(new File(dir, name), name);
+            for (int i = 0; r == null && SaveData.slot(name) && i < SaveData.SLOTS.length; i++)
+                r = switchRoots(new File(dir, SaveData.SLOTS[i]), name);
+            if (r != null) return r;
+        }
+        return null;
+    }
+
+    private static List<SaveData.Root> switchRoots(File f, String name) {
         if (!f.isFile()) return null;
         try {
             SaveData.Opened o = SaveData.open(name, Files.readAllBytes(f.toPath()), new long[0], null, -1);
             return o.steam || o.foreign ? null : o.roots;
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             return null;
         }
     }
 
     private static List<SaveData.Root> steamTemplate(File data, String name) {
+        File f = new File(steamDir(data), name + ".steam");
+        for (int i = 0; !f.isFile() && SaveData.slot(name) && i < SaveData.SLOTS.length; i++)
+            f = new File(steamDir(data), SaveData.SLOTS[i] + ".steam");
         try {
-            return SaveData.parse(Files.readAllBytes(new File(steamDir(data), name + ".steam").toPath()), SaveData.STEAM_BASE);
+            return SaveData.parse(Files.readAllBytes(f.toPath()), SaveData.STEAM_BASE);
         } catch (IOException e) {
             return null;
         }
     }
 
     // A Steam file as the Switch's, filled into the port's own save (its layout) when there is one
-    private static byte[] toSwitch(File data, SaveData.Opened o, StringBuilder notes) {
-        if (ss1(o.name)) return SaveData.switchFile(o.name, SaveData.write(o.roots, SaveData.SWITCH_BASE));
+    private static byte[] toSwitch(File data, SaveData.Opened o, StringBuilder notes) throws IOException {
+        if (ss1(o.name)) return SaveData.switchFile(o.name, SaveData.write(o.roots(), SaveData.SWITCH_BASE));
         List<SaveData.Root> template = current(data, o.name);
+        // Another release's file left as it is would crash the game: it needs 1.16's layout to fill
+        if (template == null && o.foreign)
+            throw new IOException("a save from another release needs one of this version to fill. Start the game, make a "
+                    + "hunter and save once, then import it again");
         String none = " No Switch save was here to take the layout from, so only what Steam alone has was left out.";
         if (template == null && notes.indexOf(none) < 0) notes.append(none);
         SaveData.Counts n = new SaveData.Counts();
-        return SaveData.switchFile(o.name, SaveData.write(SaveData.fill(template, o.roots, o.name, true, n), SaveData.SWITCH_BASE));
+        return SaveData.switchFile(o.name, SaveData.write(SaveData.fill(template, o.roots(), o.name, true, n), SaveData.SWITCH_BASE));
     }
 
     // A Switch file as Steam's: filled into the last Steam save brought in, and encrypted for its account if that's known
@@ -232,11 +254,11 @@ final class SaveFiles {
         int curve = curve(ini);
         if (ss1(o.name)) {
             // (photos: nothing in them differs between the two, so no filling; and no encryption on Steam either)
-            if (id != 0 && curve >= 0) return SaveData.steamSs1File(SaveData.write(o.roots, SaveData.STEAM_SS1_BASE), id);
-            return SaveData.plainFile(SaveData.write(o.roots, SaveData.SWITCH_BASE));
+            if (id != 0 && curve >= 0) return SaveData.steamSs1File(SaveData.write(o.roots(), SaveData.STEAM_SS1_BASE), id);
+            return SaveData.plainFile(SaveData.write(o.roots(), SaveData.SWITCH_BASE));
         }
         List<SaveData.Root> template = steamTemplate(data, o.name);
-        List<SaveData.Root> roots = SaveData.fill(template, o.roots, o.name, false, new SaveData.Counts());
+        List<SaveData.Root> roots = SaveData.fill(template, o.roots(), o.name, false, new SaveData.Counts());
         if (id != 0 && curve >= 0) {
             encrypted[0] = true;
             return SaveData.steamFile(SaveData.write(roots, SaveData.STEAM_BASE), id, citrus(c), curve);
@@ -258,7 +280,7 @@ final class SaveFiles {
         if (ss1(o.name)) return;
         File dir = steamDir(data);
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("can't write " + dir);
-        writeFile(new File(dir, o.name + ".steam"), SaveData.write(o.roots, SaveData.STEAM_BASE));
+        writeFile(new File(dir, o.name + ".steam"), SaveData.write(o.roots(), SaveData.STEAM_BASE));
     }
 
     // The Steam account saves are exported for: the one of the last Steam save opened here, if its key is known
@@ -266,10 +288,10 @@ final class SaveFiles {
         Ini ini = new Ini(data);
         long id = SaveData.steamId(ini.get("steam_id"));
         if (id == 0 || curve(ini) < 0) return null;
-        boolean full = true;
-        for (String n : MAIN) full &= new File(steamDir(data), n + ".steam").isFile();
-        return id + (full ? "" : " (from a save without " + (new File(steamDir(data), SaveData.SLOT + ".steam").isFile()
-                ? SaveData.SYSTEM : SaveData.SLOT) + ")");
+        boolean slots = false;
+        for (String n : SaveData.SLOTS) slots |= new File(steamDir(data), n + ".steam").isFile();
+        boolean system = new File(steamDir(data), SaveData.SYSTEM + ".steam").isFile();
+        return id + (slots && system ? "" : " (from a save without " + (slots ? SaveData.SYSTEM : "a hunter's file") + ")");
     }
 
     // Only learns the account from a Steam save (its key, and its layout to fill), without importing anything: for a
@@ -280,6 +302,7 @@ final class SaveFiles {
         for (SaveData.Opened o : opened.values()) {
             if (!o.steam) continue;
             keepSteam(data, o);
+            o.drop();
             kept.add(o.name);
         }
         if (kept.isEmpty()) throw new IOException("that's a Switch save; pick one from the Steam account");
@@ -307,13 +330,17 @@ final class SaveFiles {
                 steam = true;
                 keepSteam(data, o);
             }
+            o.drop();  // (one parsed slot at a time)
         }
         String backup = backup(data);
         File dir = saveDir(data);
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("can't write " + dir);
         for (Map.Entry<String, byte[]> f : out.entrySet()) writeFile(new File(dir, f.getKey()), f.getValue());
-        // The old save's photos (SS1_*) would be listed by nothing in the new one: out, they're in the backup
-        File[] old = dir.listFiles((x, n) -> ss1(n) && !out.containsKey(n));
+        // The old save's photos (SS1_*) would be listed by nothing in the new one: out, they're in the backup. So do its
+        // hunters when the new one has its own list of them (data00-1.bin): a slot file the list doesn't match, or one
+        // from another release, crashes the game or shows another hunter
+        boolean list = out.containsKey(SaveData.SYSTEM);
+        File[] old = dir.listFiles((x, n) -> !out.containsKey(n) && (ss1(n) || list && SaveData.slot(n)));
         if (old != null)
             for (File f : old) f.delete();
         // The game's own copy of the last committed save (fs.cpp) is of the old one now; the next save makes it again
@@ -402,6 +429,7 @@ final class SaveFiles {
                 if (!ss1(o.name)) template &= steamTemplate(data, o.name) != null;
                 out.put(o.name, toSteam(c, data, o, encrypted, notes));
             }
+            o.drop();
         }
         Zip z = new Zip();
         z.bytes = zip(out, steam ? "" : "win64_save/");
@@ -447,13 +475,14 @@ final class SaveFiles {
     }
 
     // What the menu says about the save that's here
-    static String describe(File data) {
+    static String describe(File data, boolean chinese) {
         File[] files = saveDir(data).listFiles(File::isFile);
-        if (files == null || files.length == 0) return "No save here yet.";
+        if (files == null || files.length == 0) return chinese ? "还没有存档。" : "No save here yet.";
         long newest = 0;
         for (File f : files) newest = Math.max(newest, f.lastModified());
-        return "Save: " + files.length + " file(s), last written "
-                + new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(new Date(newest)) + ".";
+        String date = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(new Date(newest));
+        return chinese ? "共有 " + files.length + " 个存档文件，上次写入于 " + date + "。"
+                : "Save: " + files.length + " file(s), last written " + date + ".";
     }
 
     // What an import or restore said, for the next start (the game closes right after it, see GameActivity.saveOver)

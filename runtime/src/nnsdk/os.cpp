@@ -25,6 +25,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "nnsdk/activity.h"
 #include "nnsdk/nvn/flags.h"
 #include "nnsdk/os.h"
 #include "nnsdk/runtime.h"
@@ -1173,6 +1174,7 @@ void DestroyThread(ThreadType* type) {
 ThreadType* GetCurrentThread() { return current_thread(); }
 void YieldThread() { sched_yield(); }
 void SleepThread(TimeSpan t) {
+    nnsdk::activity_state().checkpoint();
     // DEPURACIÓN (registro): quién duerme 20 ms o más de una vez.
     if (t.ns >= 20'000'000 && NVN_FLAG("verbose_log")) {
         static std::atomic<int> logged{0};
