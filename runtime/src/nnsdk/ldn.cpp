@@ -21,10 +21,11 @@
 // u64 secret: for the server's UDP relay, servers without one send nothing), after which the connection is a link.
 //
 // Link frames (this port's, over a spliced or direct connection): the same u32 size + u8 type framing.
-//   HELLO   station -> host  u16 link version, u16 local communication version, u8 query only, mac[6], name[33]
-//                            [, u8 flags: 1, a PC player's bridge (rise-pc-bridge), which speaks Pia itself]
-//   WELCOME host -> station  u8 node id, u32 address, NetworkInfo, u32 UDP token [, key[16]: a bridge's, Pia's]
-//   KEY     host -> bridge   key[16]: Pia's key changed (a new session in the same network)
+//   HELLO   station -> host  u16 link version, u16 local communication version, u8 kind (0 a player, 1 a search, 2 a
+//                            PC player's bridge: rise-pc-netlog's rise-bridge, which speaks Pia itself), mac[6], name[33]
+//   WELCOME host -> station  u8 node id, u32 address, NetworkInfo, u32 UDP token (none to a version 1 station)
+//   KEY     host -> bridge   u8 1, key[16]: Pia's key for the network, after the welcome and whenever it changes (u8 0
+//                            and zeros: none yet)
 //   INFO    host -> station  NetworkInfo (players joined or left, advertise data changed; also a query's answer)
 //   DATA    both ways        u32 from, u16 from port, u32 to, u16 to port, datagram
 //   BYE     both ways        u32 reason
@@ -385,7 +386,7 @@ struct Link {
     int node = -1;           // host side: the station's node id (1..7)
     uint16_t version = kLinkVersion;  // the other end's (kLinkVersionV1: no UDP, no pings from the host's side)
     bool bridge = false;              // host side: a PC player's bridge (gets Pia's key)
-    uint32_t key_serial = 0;          // the key it was last sent
+    uint32_t key_serial = ~0u;        // the key it was last sent (~0: none yet, not even the "none")
     uint32_t address = 0;    // host side: its address
     std::atomic<bool> open{true};
     // UDP (below): the station's token, the hub server's relay pair and our secret (0: a direct link), where this
@@ -734,15 +735,14 @@ void host_serve(int fd, uint64_t generation, uint32_t relay_pair, uint64_t relay
         return;
     }
     link->version = get16(p.data());
-    link->bridge = link->version >= kLinkVersion && p.size() > 11 + kNameSize && (p[11 + kNameSize] & 1) &&
-                   !nnsdk::ini::on("no_pc_players");
+    link->bridge = p[4] == 2 && !nnsdk::ini::on("no_pc_players");
     sockaddr_in peer{};
     if (relay_pair && link->version >= kLinkVersion && peer_of(fd, &peer)) {  // (spliced by a server with a UDP relay)
         link->relay_pair = relay_pair;
         link->relay_secret = relay_secret;
         set_udp_route(*link, peer);
     }
-    const bool query = p[4] != 0;
+    const bool query = p[4] == 1;
     if (query) {  // a search: the network, then goodbye
         Info info;
         {
@@ -792,11 +792,6 @@ void host_serve(int fd, uint64_t generation, uint32_t relay_pair, uint64_t relay
         welcome.insert(welcome.end(), g_info.begin(), g_info.end());
     }
     if (link->version >= kLinkVersion) add32(welcome, link->token);  // (an older station wants it without)
-    if (link->bridge) {
-        uint8_t key[16];
-        link->key_serial = nnsdk::pia_key::current(key);
-        welcome.insert(welcome.end(), key, key + 16);
-    }
     link->send(kWelcome, welcome);
     printf("[ldn] player %d joined (%u.%u.%u.%u)%s\n", link->node, link->address >> 24, link->address >> 16 & 255,
            link->address >> 8 & 255, link->address & 255,
@@ -808,10 +803,11 @@ void host_serve(int fd, uint64_t generation, uint32_t relay_pair, uint64_t relay
             link->send(kLinkPing, {});
             last_ping = now_ms();
         }
-        if (link->bridge && nnsdk::pia_key::g_serial.load() != link->key_serial) {
-            uint8_t key[16];
-            link->key_serial = nnsdk::pia_key::current(key);
-            link->send(kKey, std::vector<uint8_t>(key, key + 16));
+        if (link->bridge && (link->key_serial == ~0u || nnsdk::pia_key::g_serial.load() != link->key_serial)) {
+            std::vector<uint8_t> frame(17);
+            link->key_serial = nnsdk::pia_key::current(frame.data() + 1);
+            frame[0] = link->key_serial != 0;
+            link->send(kKey, frame);
         }
         pollfd pf{fd, POLLIN, 0};
         if (poll(&pf, 1, 1000) == 0) {
