@@ -1,9 +1,11 @@
 #pragma once
-// The key Pia encrypts a Local Play network's packets with (AES-128-GCM), for a PC player bridged into it (ldn.cpp:
-// a station whose hello says it's a bridge gets it in the welcome, then again whenever it changes). Pia makes a new
-// one for each network and expands it with its key schedule (main+0x24dab50); the one expanded from main+0x24d9cb0 is
-// the network's (checked against captures: every packet of two sessions verifies with it). MH Rise 16.0.1 only: the
-// code's bytes are checked before anything is patched.
+// The key Pia encrypts a Local Play network's packets with (AES-128-GCM), for a PC player's bridge in it (ldn.cpp:
+// a station whose hello says it's a bridge gets it in a KEY frame, then again whenever it changes). Pia makes a new one
+// for each network and expands it with its key schedule (main+0x24dab50): on the host from main+0x24d9ae4 when the
+// network is made, on a station from main+0x24d9cb0 when it joins. The newest from either is the network's (checked
+// against captures: every packet of three sessions verifies with it; the one 0x24d9ae4 expands on the title screen,
+// before any network, is replaced by then). MH Rise 16.0.1 only: the code's bytes are checked before anything is
+// patched.
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -34,7 +36,7 @@ inline uint32_t current(uint8_t out[16]) {
 extern "C" inline uint64_t pia_key_schedule(void* ctx, const uint8_t* key, uint32_t len, uint32_t mode) {
     const auto caller = reinterpret_cast<uintptr_t>(__builtin_return_address(0)) - reinterpret_cast<uintptr_t>(g_main);
     if (g_observer && key && len && len <= 32) g_observer(key, len, mode, caller);
-    if (g_keep && key && len == 16 && caller == 0x24d9cb0) {
+    if (g_keep && key && len == 16 && (caller == 0x24d9ae4 || caller == 0x24d9cb0)) {
         std::lock_guard lock(g_mutex);
         if (memcmp(g_key, key, 16) != 0) {
             memcpy(g_key, key, 16);
