@@ -146,7 +146,7 @@ with adb); changing that setting in the menu moves it into the ini.
 
 | Name | Effect |
 |---|---|
-| `lsfg/` | Frame generation (Lossless Scaling's LSFG) to show ~60 fps. Needs **your own** `Lossless.dll` from the Windows app *Lossless Scaling* (sold on Steam): import it in Settings → Frame generation or on the start screen's GPU driver page (it's copied into the app), or copy it into that `lsfg` folder or to `Download/Lossless.dll`. Not included here. Read at start-up. Its flow scale (how finely it follows motion) is 25 % by default; `lsfg_flow_50` / `lsfg_flow_100` (Settings → Frame generation → Quality Preset) are sharper and heavier. |
+| `lsfg/` | Frame generation (Lossless Scaling's LSFG) to show ~60 fps. Needs **your own** `Lossless.dll` from the Windows app *Lossless Scaling* (sold on Steam): import it in Settings → Frame generation or on the start screen's GPU driver page (it's copied into the app), or copy it into that `lsfg` folder or to `Download/Lossless.dll`. Not included here. It has to be the DLL of Lossless Scaling's **lsfg-vk beta branch** (Steam: Lossless Scaling → Properties → Betas): the usual one only has the shaders as Direct3D bytecode, and the game then says so in the log and uses the built-in generator. Read at start-up. Its flow scale (how finely it follows motion) is 25 % by default; `lsfg_flow_50` / `lsfg_flow_100` (Settings → Frame generation → Quality Preset) are sharper and heavier. |
 | `lsfg/motion.*`, `shaders/fg_*.comp` | The built-in frame generator: no Lossless.dll, plain Vulkan 1.1 compute. Dense optical flow both ways (A to B and B to A) by inverse search, the method of Kroeger et al., *Fast Optical Flow using Dense Inverse Search* (ECCV 2016): a luma pyramid from a quarter of the picture down to 1/32, 8x8 patches every 4 texels refined by Lucas-Kanade against the template's own gradients, then densified per texel by how well each patch fits there. The picture between follows both flows back, uses a forward-backward check to tell covered from uncovered areas and takes those from the frame that sees them, and keeps still pixels such as the HUD unwarped; bicubic samples. Quality Preset (Settings → Frame generation, the same `lsfg_flow_50` / `lsfg_flow_100` switches as LSFG's flow): the finest flow level at 1/4 of the picture (Light, default), 1/3 (Balanced) or 1/2 (Sharp). Used when there's no DLL or Lossless's chain can't run on the GPU, or always with `fg_builtin` (Settings → Frame generation → Generator). Turned on with `lsfg`, as before. |
 | `fg_target_60`, `fg_target_90`, `fg_target_120` | Adaptive frame generation (Settings → Frame generation → Target): instead of one generated picture per real frame, as many as reach the target (up to three), placed evenly between the real ones (at 1/3 and 2/3, say), never more than the screen's refreshes between two real frames. A new multiplier has to hold for 15 real frames before it's used. With Lossless Scaling's generator each extra picture waits for the one before on the GPU; the built-in one only redoes its last pass. Applies at once. |
 | `resolution_240`, `resolution_360`, `resolution_432`, `resolution_480`, `resolution_576`, `resolution_648`, `resolution_720` | Base resolution of the 3D scene: 427x240 (the lowest, for the weakest GPUs; FSR helps the upscale), 640x360, 768x432, 854x480 (lower, for weak GPUs), 1024x576, 1152x648 or 1280x720 instead of the game's 960x540 (720p fills the whole 720p picture, with no scaling inside the game). In docked mode, the same ratios of the docked scene. Live. |
@@ -320,6 +320,14 @@ Settings → **Saves** handles the save in the data folder's `save/`, which is i
   the same way, so a save of this version has to be there first: start the game, make a hunter and save once, then
   import (the backups count too). Don't copy the other release's files into `save/` by hand; the game crashes on them.
   When the imported save has its own hunter list (`data00-1.bin`), the old save's other hunter slots go as well.
+- **From the Microsoft Store (Game Pass) version**: its saves are encrypted in a way only that game opens, so it has to
+  write them plain first. With [REFramework](https://github.com/praydog/REFramework) on that game, put
+  [`tools/rise_save_plain.lua`](tools/rise_save_plain.lua) in its `reframework/autorun/`, open the REFramework menu →
+  Script Generated UI → **Rise: save without encryption**, press the button (type and platform go to None) and let the
+  game save (a quest, or an option changed). Then copy the save out of the Store's container with a save tool and import
+  it here as it is: its names (`SaveData001Slot`, `SaveData00-1`, `SS1_SaveData001Slot`...) are read as Steam's, and
+  the plain files have the PC version's layout, so they're converted like a Steam save. A save still encrypted is
+  turned down with that explanation.
 - **Export for Steam**: the save converted to the PC version's, photos included, in `win64_save/`, to copy into Steam's
   `...\1446780\remote\win64_save` (with the game closed, and Steam Cloud off for it, or it may bring the old one back).
   It's encrypted for the account under **Steam account**.
@@ -329,12 +337,16 @@ Settings → **Saves** handles the save in the data folder's `save/`, which is i
   Started in the port and never played on PC? Start the PC game once on that Steam account, make a character and save,
   then pick that save here. Until an account is set, the Steam export comes out unencrypted, for a save editor such as
   [ree-save-editor](https://github.com/kvasszn/ree-save-editor) to encrypt.
+  Without a Steam save of yours to fill, what only the PC version has (its options, key bindings, DLC list, external
+  quests) is added with the values a new PC save starts with.
 - **Convert a save**: the same conversions into a zip, without touching the port's save.
 
 The two versions don't have quite the same fields, and the game lays its data out counting from the start of the file,
 which isn't the same on each, so a converted save is rebuilt rather than copied: the other platform's save gives the
 layout (this port's own save going to the Switch, the last Steam save imported going to Steam) and the converted one
-gives every value both have. Have a save of your own on the target side for the best result.
+gives every value both have. Have a save of your own on the target side for the best result. What belongs to the platform rather than the
+hunter (network and guild card IDs, the Switch's NSA ID, the confirm button, platform quests, followers) stays the target
+save's. Every album group comes across (`SS1_*`, `SS2_*`...), not only the photos.
 
 ## Credits
 

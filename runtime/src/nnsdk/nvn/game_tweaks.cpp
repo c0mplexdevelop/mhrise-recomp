@@ -283,8 +283,8 @@ void draw_distance(uint8_t* renderer) {
     static float game = 0, last = 0;
     static bool seen = false, ours = false;
     if (!seen || !ours || *ratio != last) {  // the game set it (a new area): that's the new default
+        if (!seen || *ratio != game) NVN_LOG("game settings: SmallObjectCullingRatio = %g\n", *ratio);
         game = *ratio;
-        NVN_LOG("game settings: SmallObjectCullingRatio = %g\n", game);
     }
     seen = true;
     const float share = wanted_draw_distance();
