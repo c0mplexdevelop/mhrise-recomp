@@ -7,8 +7,8 @@ final class Game {
     static final long APP_ID = 0x0100B04011742000L;
     // The port only works with this exact version (its addresses and patches are those of this main): recognised by the
     // build ID of the ExeFS main (bytes 0x40-0x53 of the NSO header).
-    static final String VERSION = "16.0.1";
-    static final String BUILD_ID = "55d50ca1805e9c5bba508d601add852f255a32ba";
+    static final String VERSION = "16.0.2";
+    static final String BUILD_ID = "c9a3dd7702075ecd90101f45553895822804d38f";
     static final String ROMFS_MARKER = "re_chunk_000.pak";  // relative to the RomFS root
     static final String UPDATE_MARKER = "re_chunk_000.pak.patch_015.pak";  // only present with the update applied (null: not checked)
     static final String DLC_MARKER = "re_dlc_000.pak";  // in the root of each DLC RomFS (null: game without DLC)
