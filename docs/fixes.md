@@ -102,6 +102,8 @@ mixed each time. It's now one continuous queue (`audio_cola.h`).
   collision particles), the pipeline crash guard and skip list, the vertex formats a driver can't read read through ones
   it can, tessellation in its domain, BC as ASTC on the GPU, barrier bits, and the Mali half-packing fixes. The Lua
   runtime, the MOD UI, PC mod import and everything outside the renderer are as they were.
+- **Render distance** (`draw_distance_*`, Settings → Detail): small and medium objects stop being drawn sooner in the
+  distance, through the game's own small-object culling (its ratio divided by the share picked).
 - **Shared buffer memory** (`zero_copy`, off by default until tested): the game's CPU_UNCACHED pools (vertices,
   indices, constants) become memory the GPU reads in place, so draws stop copying those ranges to staging or keeping
   watched mirrors of them every frame. Pools the renderer writes mid-submit stay copied. After nxnative's zero-copy pools.

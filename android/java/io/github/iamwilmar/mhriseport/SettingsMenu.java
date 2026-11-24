@@ -358,6 +358,13 @@ final class SettingsMenu {
                         + "less work for the GPU, simpler models a little closer. Applies at once.", "调整随距离切换低细节模型的时机。调低后，更近的模型也会简化，GPU 负载随之下降。立即生效。"),
                 new String[] {tr("Game's", "游戏默认"), tr("Low", "低"), tr("Lowest", "更低"), tr("Minimum", "最低"), tr("High", "高")},
                 new String[] {null, "model_detail_low", "model_detail_lowest", "model_detail_min", "model_detail_high"});
+        exclusive(tr("Render distance", "渲染距离"),
+                tr("How far away small and medium things (rocks, plants, props, small monsters) stay drawn, as a share of "
+                        + "the game's own distance. Lower: they disappear sooner in the distance and the GPU draws less. "
+                        + "Terrain, big monsters and hunters are big enough to stay. Applies at once.",
+                        "小型和中型物体（岩石、植物、道具、小怪物）在多远距离内仍会绘制，按游戏默认距离的比例计算。调低后远处物体更早消失，GPU 绘制更少。地形、大型怪物和猎人足够大，不受影响。立即生效。"),
+                new String[] {tr("100% (game's)", "100%（游戏默认）"), "75%", "50%", "33%", "25%"},
+                new String[] {null, "draw_distance_75", "draw_distance_50", "draw_distance_33", "draw_distance_25"});
         exclusive(tr("Texture streaming", "纹理流送"),
                 tr("How many of the largest texture sizes the game skips loading. Fewer: blurrier textures up close, less "
                         + "memory and bandwidth. Applies as textures load.", "跳过最高的若干级纹理。较小的纹理在近处更模糊，但可节省内存和带宽。加载纹理时生效。"),
@@ -2090,7 +2097,7 @@ final class SettingsMenu {
         "no_dynamic_state", "astc_cache_in_data_folder", "bc_astc", "aspect_16_10", "aspect_21_9", "aspect_4_3", "aspect_stretch", "bindless_arrays", "breadcrumbs",
         "capture_button", "count_check", "depth_gequal", "dock_mode", "effects_lower", "effects_lowest", "fast_depth", "fps_20", "fps_25", "fps_40",
         "fps_45", "gpu_occlusion", "hud_battery", "hud_cpu", "hud_frametime", "hud_gpu", "hud_ram", "hud_shaders", "no_hud_battery", "no_hud_cpu",
-        "no_hud_frametime", "no_hud_gpu", "no_hud_ram", "no_hud_shaders", "lsfg_no_guard", "keep_dead_functions", "log_lines", "low_memory", "model_detail_high", "model_detail_low",
+        "no_hud_frametime", "no_hud_gpu", "no_hud_ram", "no_hud_shaders", "lsfg_no_guard", "keep_dead_functions", "log_lines", "low_memory", "model_detail_high", "model_detail_low", "draw_distance_75", "draw_distance_50", "draw_distance_33", "draw_distance_25",
         "model_detail_lowest", "model_detail_min", "no_adpf", "no_af", "no_affinity", "no_ao", "no_async_shaders", "no_bindless_arrays", "no_bloom",
         "no_chromatic_aberration", "no_depth_of_field", "no_dynamic_resolution", "no_dynamic_shadows",
         "no_effect_ssr", "no_film_grain", "no_foliage_sway", "no_fps", "no_fsr", "no_fxaa", "no_god_rays",
