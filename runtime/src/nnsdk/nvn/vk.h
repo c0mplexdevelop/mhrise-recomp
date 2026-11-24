@@ -20,6 +20,7 @@ struct VkContext {
     // VK_GOOGLE_display_timing activa: se puede pedir a qué hora se muestra cada imagen (LSFG: el real 16,7 ms
     // después del generado, para que el compositor no tire uno de los dos).
     bool display_timing = false;
+    bool ahb = false;  // VK_ANDROID_external_memory_android_hardware_buffer: the shared pools (zero_copy.cpp)
     bool push_descriptor = false;  // VK_KHR_push_descriptor activa (el escalado FSR, fsr.cpp)
     bool shader_float16 = false;  // VK_KHR_shader_float16_int8 encendida: los shaders FP16 de LSFG (lsfg/)
     // VK_EXT_descriptor_indexing con shaderSampledImageArrayNonUniformIndexing: los arrays bindless (decals, sondas) se

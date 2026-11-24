@@ -197,6 +197,12 @@ bool create(VkContext& c, bool system_driver) {
         } else if (strcmp(e.extensionName, VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME) == 0) {
             device_ext.push_back(VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME);
             c.display_timing = true;
+        } else if (strcmp(e.extensionName, VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME) == 0 &&
+                   c.props.apiVersion >= VK_API_VERSION_1_1) {
+            device_ext.push_back(VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME);
+            c.ahb = true;
+        } else if (strcmp(e.extensionName, VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME) == 0) {
+            device_ext.push_back(VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME);  // (the hardware buffer one asks for it)
         } else if (strcmp(e.extensionName, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME) == 0) {
             device_ext.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
             c.push_descriptor = true;
