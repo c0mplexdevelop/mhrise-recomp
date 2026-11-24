@@ -1595,9 +1595,17 @@ private:
         key.polygon.cull_face = key.polygon.front_face = 0;
         memset(&key.depth_stencil, 0, sizeof key.depth_stencil);
     }
-    // With vertex input dynamic state: the key without the vertex layout (set per draw)
+    // With vertex input dynamic state: the key without the vertex layout (set per draw). Except what the vertex shader
+    // is translated for: an attribute it reads as integers, or through a replacement format it converts (vertex_input),
+    // keeps its format, so its pipeline gets the shader that matches what the per-draw layout feeds it. Plain float ones
+    // go to 0 (read as float too). As Eden keeps each attribute's type in its key with this extension.
     static void normalize_vertex_input(PipelineKey& key) {
-        memset(key.attribs, 0, sizeof key.attribs);
+        for (VertexAttribState& a : key.attribs) {
+            const uint8_t format = a.format;
+            const VertexInput v = vertex_input(format);
+            a = VertexAttribState{};
+            if (v.fetch || v.replaced) a.format = format;
+        }
         memset(key.strides, 0, sizeof key.strides);
         memset(key.divisors, 0, sizeof key.divisors);
     }
