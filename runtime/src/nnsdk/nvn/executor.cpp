@@ -8696,8 +8696,9 @@ void Executor::draw(const cmd::Draw& in) {
             const VertexAttribState a = k < st_.attribs.size() ? st_.attribs[k] : VertexAttribState{};
             const uint32_t stride = a.stream < st_.streams.size() ? st_.streams[a.stream].stride : 0;
             const bool instanced = a.stream < st_.streams.size() && st_.streams[a.stream].divisor;
-            const FormatInfo* f = format_info(a.format);
-            const VkFormat format = f && f->vk != VK_FORMAT_UNDEFINED ? f->vk : VK_FORMAT_R32G32B32A32_SFLOAT;
+            // The format the pipeline would bake: a driver that can't read the game's from a vertex buffer gets the
+            // replacement the vertex shader was translated for (vertex_input), or the shader converts bytes it isn't fed
+            const VkFormat format = vertex_input(a.format).format;
             binds[n] = {VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT, nullptr, k, stride,
                         instanced ? VK_VERTEX_INPUT_RATE_INSTANCE : VK_VERTEX_INPUT_RATE_VERTEX, 1};
             attrs[n] = {VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT, nullptr, k, k, format, 0};
