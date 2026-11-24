@@ -61,7 +61,6 @@ add_library(nnsdk SHARED
   src/nnsdk/nvn/program.cpp
   src/nnsdk/nvn/spirv_cache.cpp
   src/nnsdk/nvn/queue.cpp
-  src/nnsdk/nvn/zero_copy.cpp
   src/nnsdk/nvn/texture.cpp
   src/nnsdk/nvn/vk.cpp
   src/nnsdk/nvn/window.cpp
@@ -119,7 +118,7 @@ target_include_directories(astcenc PUBLIC ${EXTERNAL}/astcenc)
 target_link_libraries(nnsdk PRIVATE astcenc)
 target_include_directories(nnsdk PRIVATE ${EXTERNAL}/volk)
 target_compile_definitions(nnsdk PRIVATE VK_NO_PROTOTYPES VK_USE_PLATFORM_ANDROID_KHR)
-target_link_libraries(nnsdk PRIVATE adrenotools android nativewindow mediandk aaudio z dl)
+target_link_libraries(nnsdk PRIVATE adrenotools android mediandk aaudio z dl)
 # FFmpeg (LGPL, solo el demuxer MP4; tools/build_ffmpeg.sh): respaldo cuando AMediaExtractor no encuentra pistas en un
 # vídeo. Sin esa carpeta se compila igual, sin el respaldo.
 set(FFMPEG_DIR ${CMAKE_CURRENT_LIST_DIR}/../third_party/ffmpeg-android)

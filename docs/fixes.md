@@ -104,9 +104,6 @@ mixed each time. It's now one continuous queue (`audio_cola.h`).
   runtime, the MOD UI, PC mod import and everything outside the renderer are as they were.
 - **Render distance** (`draw_distance_*`, Settings → Detail): small and medium objects stop being drawn sooner in the
   distance, through the game's own small-object culling (its ratio divided by the share picked).
-- **Shared buffer memory** (`zero_copy`, off by default until tested): the game's CPU_UNCACHED pools (vertices,
-  indices, constants) become memory the GPU reads in place, so draws stop copying those ranges to staging or keeping
-  watched mirrors of them every frame. Pools the renderer writes mid-submit stay copied. After nxnative's zero-copy pools.
 - **First-use freezes on Turnip:** every compute shader went through spirv-opt, which took 4.3 s for 4 new shaders the
   first time an attack used them (plus 1.5 s of their pipelines). That was a fix for Qualcomm's own compiler; on Mesa
   drivers only compute shaders with a switch (BRX) go through it now (`spirv_opt_compute` restores the old rule).

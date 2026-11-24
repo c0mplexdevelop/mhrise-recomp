@@ -49,7 +49,6 @@
 #include "nnsdk/nvn/fsr.h"
 #include "nnsdk/nvn/hud.h"
 #include "nnsdk/nvn/lsfg/framegen.h"
-#include "nnsdk/nvn/zero_copy.h"
 #include "nnsdk/nvn/flags.h"
 #include "nnsdk/runtime.h"
 #include "nnsdk/nvn/flags.h"
@@ -1807,7 +1806,6 @@ private:
     bool pending_fragments_only_ = false;   // la barrera aplazada solo ordena fragmentos
     bool fragments_barrier_open_ = false;   // hubo una solo de fragmentos después de la última completa
     uint64_t prof_barriers_fragments_ = 0;  // perfil: barreras que solo ordenaron fragmentos (barrier_bits)
-    uint64_t prof_zero_copy_ = 0;           // perfil: lecturas de pools compartidos con la GPU (zero_copy)
     uint64_t prof_split_storage_ = 0, prof_split_sample_ = 0;  // perfil: por qué se cortó (escribe storage, lee un adjunto)
     // Perfil de cortes (con registro): por qué se cerró cada pase y qué tiene que ver con él el siguiente. Lo dice quien
     // cierra el pase por su cuenta (split_why_: espejo, textura, barrera, unión de overlays…); si nadie lo dijo, el comando
@@ -3598,13 +3596,6 @@ void Executor::run(const std::vector<const CommandList*>& lists) {
     begin();
     apply_astc_results();
     if (!NVN_FLAG("no_mirrors_at_start")) preload_mirrors();
-    if (zero_copy::any())  // what this submit will write itself, before any draw binds a shared pool in place
-        for (const CommandList* list : lists)
-            for (const Command& c : list->commands) {
-                if (const auto* u = std::get_if<cmd::UpdateBuffer>(&c)) zero_copy::cpu_writes(u->address, u->size);
-                else if (const auto* x = std::get_if<cmd::ClearBuffer>(&c)) zero_copy::cpu_writes(x->address, x->size);
-                else if (const auto* y = std::get_if<cmd::CopyBuffer>(&c)) zero_copy::cpu_writes(y->dst, y->size);
-            }
     run_lists_ = &lists;  // la mirada adelante de los render passes (scan_pass) recorre lo que queda
     run_serial_++;
     for (cur_list_ = 0; cur_list_ < lists.size(); cur_list_++)
@@ -8475,21 +8466,12 @@ void Executor::draw(const cmd::Draw& in) {
                 NVN_LOG("F SSBO leído %#llx+%llu: %s%s\n", static_cast<unsigned long long>(range.address),
                         static_cast<unsigned long long>(size), ov ? "de la GPU, último valor:" : "de la memoria", vals.c_str());
             }
-            // A shared pool (zero_copy.cpp): read in place, nothing copied or watched
-            VkBuffer shared = VK_NULL_HANDLE;
-            VkDeviceSize shared_offset = 0;
-            const bool in_shared = !ov && from_game && !(r.kind == Resource::StorageBuffer && r.is_written) &&
-                                   zero_copy::find(range.address, size, &shared, &shared_offset) &&
-                                   shared_offset % (r.kind == Resource::UniformBuffer ? ubo_align : ssbo_align) == 0;
             VkDeviceSize mirror_offset = 0;
-            const Mirror* mir = !ov && !in_shared && from_game && r.kind == Resource::StorageBuffer && !r.is_written
+            const Mirror* mir = !ov && from_game && r.kind == Resource::StorageBuffer && !r.is_written
                                     ? mirror(range.address, range.size, &mirror_offset, false)
                                     : nullptr;
             if (ov) {
                 push_buffer(ov->buffer, ov_offset, size);
-            } else if (in_shared) {
-                prof_zero_copy_++;
-                push_buffer(shared, shared_offset, size);
             } else if (mir) {
                 push_buffer(mir->buffer, mirror_offset, range.size);
             } else if (const auto* hit = from_game ? copied_.find(range.address, size) : nullptr) {
@@ -8762,28 +8744,6 @@ void Executor::draw(const cmd::Draw& in) {
                 mirror_index_offset = off + (d.index_address - base);
             }
     }
-    // Indices in a shared pool (zero_copy.cpp): bound where they are (not the 8-bit ones, widened to 16, nor quads).
-    // Only with every vertex stream shared too: then nothing needs the indices' range (the vertex window), which
-    // would mean reading them all on the CPU each draw (the vertex cache keeps it for the ones it holds).
-    bool shared_index = false;
-    if (indices && !gpu_index && !mirror_index && d.index_type >= 1 && d.primitive != 7 && !gpu_args && zero_copy::any()) {
-        bool streams_shared = true;
-        for (uint32_t k = 0; k < 16 && streams_shared; k++) {
-            if (!(vs->shader.input_generics & (1ull << k)) || k >= st_.attribs.size()) continue;
-            const uint32_t stream = st_.attribs[k].stream;
-            const BufferRange r = stream < kMaxVertexBuffers ? st_.vertex_buffers[stream] : BufferRange{};
-            if (r.address && !zero_copy::find(r.address, r.size, nullptr, nullptr)) streams_shared = false;
-        }
-        VkDeviceSize off = 0;
-        if (streams_shared && zero_copy::find(d.index_address, uint64_t{isize} * std::max(d.count, 1), &mirror_index, &off) &&
-            off % isize == 0) {
-            mirror_index_offset = off;
-            shared_index = true;
-            prof_zero_copy_++;
-        } else {
-            mirror_index = VK_NULL_HANDLE;
-        }
-    }
     // Cuántos índices leer: los del draw; con el número en la GPU y los índices en la CPU (p. ej. quads de
     // balas o partículas, que la GPU cuenta) no se sabe: un rango generoso, hasta el final del memory pool.
     size_t index_bytes = size_t{isize} * d.count;
@@ -8798,7 +8758,7 @@ void Executor::draw(const cmd::Draw& in) {
                     static_cast<unsigned long long>(d.index_address));
     }
     const BufferCache::Entry* cached_indices =
-        indices && !gpu_index && !shared_index && d.primitive != 7 && index_bytes
+        indices && !gpu_index && d.primitive != 7 && index_bytes
             ? buffer_cache_.get(d.index_address, index_bytes, d.index_type, submit_index_)
             : nullptr;
     VkBuffer host_index = VK_NULL_HANDLE;  // ese rango, si cambia demasiado para la caché: copia directa
@@ -8817,7 +8777,7 @@ void Executor::draw(const cmd::Draw& in) {
     // Con índices escritos por la GPU no se sabe cuántos vértices se leen: los streams se copian enteros. Con
     // argumentos de la GPU pero índices de la CPU, el máximo del rango de índices acota los vértices (copiar los
     // streams enteros en cada draw de partículas agotaba la RAM en segundos).
-    const bool unknown_vertices = gpu_index != VK_NULL_HANDLE || (gpu_args && !indices) || multi || shared_index;
+    const bool unknown_vertices = gpu_index != VK_NULL_HANDLE || (gpu_args && !indices) || multi;
     // Ventana de vértices: los streams por vértice se copian (y se enlazan) desde first_vertex, vertex_count
     // vértices. En un draw directo empieza en el primer vértice que usa y el draw se desplaza para compensar:
     // las mallas de la fábrica comparten un buffer de 4 MB con índices absolutos (149724…) y cada draw copiaba
@@ -8890,12 +8850,6 @@ void Executor::draw(const cmd::Draw& in) {
                                            stride, a.format, a.stream);
                 remember(o->buffer, ov_offset + skip);
                 gpu_vertices = true;
-                continue;
-            }
-            VkBuffer shared = VK_NULL_HANDLE;  // a shared pool (zero_copy.cpp): bound where it is
-            if (zero_copy::find(range.address, range.size, &shared, &ov_offset)) {
-                prof_zero_copy_++;
-                remember(shared, ov_offset + skip);
                 continue;
             }
             if (vigilar_nan_ && !divisor && stride && skip < range.size)  // DEPURACIÓN: lo que lee de verdad este draw
@@ -9032,9 +8986,6 @@ void Executor::draw(const cmd::Draw& in) {
             vkCmdDrawIndirect(cmd_, gpu_args, gpu_args_offset, 1, 16);
         else
             vkCmdDrawIndexed(cmd_, static_cast<uint32_t>(d.count), std::max(d.instances, 1), 0, vertex_offset, d.base_instance);
-    } else if (shared_index) {
-        vkCmdBindIndexBuffer(cmd_, mirror_index, mirror_index_offset, d.index_type == 2 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
-        vkCmdDrawIndexed(cmd_, static_cast<uint32_t>(d.count), std::max(d.instances, 1), 0, vertex_offset, d.base_instance);
     } else if (cached_indices) {
         vkCmdBindIndexBuffer(cmd_, cached_indices->buffer, cached_indices->offset,
                              d.index_type == 2 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
@@ -10758,24 +10709,15 @@ void Executor::dispatch(const cmd::Dispatch& v) {
         // dos tercios de NvnSubmit.
         const bool cacheable = src == reinterpret_cast<const void*>(range.address) && range.size &&
                                !(r.kind == Resource::StorageBuffer && r.is_written);
-        VkBuffer shared = VK_NULL_HANDLE;  // a shared pool (zero_copy.cpp): read in place
-        VkDeviceSize shared_offset = 0;
-        const bool in_shared = !ov && cacheable && zero_copy::find(range.address, size, &shared, &shared_offset) &&
-                               shared_offset % (r.kind == Resource::UniformBuffer ? ubo_align : ssbo_align) == 0;
         VkDeviceSize mirror_offset = 0;
-        const Mirror* mir = !ov && !in_shared && cacheable && r.kind == Resource::StorageBuffer
-                                ? mirror(range.address, range.size, &mirror_offset)
-                                : nullptr;
+        const Mirror* mir = !ov && cacheable && r.kind == Resource::StorageBuffer ? mirror(range.address, range.size, &mirror_offset)
+                                                                                  : nullptr;
         if (vigilar_nan_ && !ov && r.kind == Resource::StorageBuffer && range.address && range.size)  // DEPURACIÓN
             note_partial_read(r.is_written ? "un compute (SSBO escrito)" : "un compute", range.address, size);
         const char* from = "staging";  // DEPURACIÓN (read_after_dispatch)
         if (ov) {
             from = "overlay";
             buffers.push_back({ov->buffer, ov_offset, size});
-        } else if (in_shared) {
-            from = "pool compartido";
-            prof_zero_copy_++;
-            buffers.push_back({shared, shared_offset, size});
         } else if (mir) {
             from = "espejo";
             buffers.push_back({mir->buffer, mirror_offset, range.size});
@@ -12193,10 +12135,6 @@ void Executor::profile_frame() {
                     skip_unordered_barriers_ ? " (saltadas, barrier_bits)" : "", prof_barriers_fragments_ / double(period));
             std::fill(std::begin(prof_barrier_bits_), std::end(prof_barrier_bits_), 0);
             prof_barriers_no_order_ = prof_barriers_fragments_ = 0;
-        }
-        if (prof_zero_copy_) {
-            NVN_LOG("perfil zero_copy (por frame): %.1f lecturas de pools compartidos, sin copia\n", prof_zero_copy_ / double(period));
-            prof_zero_copy_ = 0;
         }
         NVN_LOG("perfil merged_passes (por frame): %.1f pases con adjuntos de más, %.1f cambios de targets sin cortar%s\n",
                 prof_passes_merged_ / double(period), prof_rt_merged_ / double(period), merge_passes_ ? "" : " (apagado)");

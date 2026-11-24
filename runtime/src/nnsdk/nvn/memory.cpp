@@ -16,7 +16,6 @@
 #include "nnsdk/nvn/commands.h"
 #include "nnsdk/nvn/nvn.h"
 #include "nnsdk/nvn/objects.h"
-#include "nnsdk/nvn/zero_copy.h"
 
 namespace nnsdk {
 // os_memory.cpp: [dst, dst + size) pasa a ver las páginas del heap que hay en src. false si no se puede (src fuera del
@@ -100,7 +99,6 @@ nvn::Boolean nvnMemoryPoolInitialize(void* pool, const MemoryPoolBuilder* b) {
         NVN_LOG("memory pool %p %s: %zu KB, flags 0x%x, memoria %p%s\n", pool,
                 reserved ? "virtual" : (b->flags & nvn::kPoolFlagPhysical) ? "físico" : "", b->size >> 10, b->flags,
                 static_cast<void*>(storage), reserved && b->storage ? " (la del juego no se usa)" : "");
-    if (!reserved) nvn::zero_copy::adopt(storage, b->size, b->flags);
     nvn::MemoryPool& p = nvn::g_memory_pools.create(pool);
     p.storage = storage;
     p.size = b->size;
@@ -109,12 +107,7 @@ nvn::Boolean nvnMemoryPoolInitialize(void* pool, const MemoryPoolBuilder* b) {
     return 1;
 }
 void nvnMemoryPoolFinalize(void* pool) {
-    std::unique_ptr<nvn::MemoryPool> p = nvn::g_memory_pools.take(pool);
-    if (p && !p->reserved && nvn::zero_copy::find(reinterpret_cast<uint64_t>(p->storage), 1, nullptr, nullptr)) {
-        nvn::wait_idle();  // (what's recorded may still read it)
-        nvn::zero_copy::release(p->storage);
-    }
-    if (p && p->reserved) {
+    if (std::unique_ptr<nvn::MemoryPool> p = nvn::g_memory_pools.take(pool); p && p->reserved) {
         // Lo que ya está grabado puede seguir leyendo de sus direcciones (subidas de texturas): primero que acabe.
         nvn::wait_idle();
         munmap(p->storage, (p->size + page_size() - 1) & ~(page_size() - 1));
