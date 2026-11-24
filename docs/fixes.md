@@ -94,6 +94,14 @@ mixed each time. It's now one continuous queue (`audio_cola.h`).
 
 ## Performance
 
+- **The renderer is v1.0.85's again.** yun-wulian's fork brought a rewrite of the renderer (resource ownership and
+  lifetimes, a texture registry, pipeline workers with futures, a new presenter) that cost about 3 ms of CPU and 2 ms of
+  GPU a frame on a Mali-G615, and whose new translator fingerprint emptied the
+  pipeline warm-up list. This build keeps v1.0.85's renderer with only what was worth keeping from that work on top:
+  2D textures' block heights and the compute particles' sub-ranges (the blood splashes as big patches and the magnified
+  collision particles), the pipeline crash guard and skip list, the vertex formats a driver can't read read through ones
+  it can, tessellation in its domain, BC as ASTC on the GPU, barrier bits, and the Mali half-packing fixes. The Lua
+  runtime, the MOD UI, PC mod import and everything outside the renderer are as they were.
 - **First-use freezes on Turnip:** every compute shader went through spirv-opt, which took 4.3 s for 4 new shaders the
   first time an attack used them (plus 1.5 s of their pipelines). That was a fix for Qualcomm's own compiler; on Mesa
   drivers only compute shaders with a switch (BRX) go through it now (`spirv_opt_compute` restores the old rule).

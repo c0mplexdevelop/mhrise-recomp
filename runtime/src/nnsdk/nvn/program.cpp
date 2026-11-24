@@ -28,7 +28,6 @@
 
 #include "nnsdk/nvn/commands.h"
 #include "nnsdk/nvn/count_check.h"
-#include "nnsdk/nvn/vertex_fetch.h"
 #include "nnsdk/nvn/nvn.h"
 #include "nnsdk/nvn/flags.h"
 #include "nnsdk/nvn/objects.h"
@@ -43,11 +42,7 @@ struct ShaderData {
     const void* control;  // sección de control
 };
 
-struct ProgramEntry {
-    nvn::Program program;
-    bool referenced = false;  // a recorded bind can now read program.stages under the executor lock
-};
-nvn::Objects<ProgramEntry> g_programs;
+nvn::Objects<nvn::Program> g_programs;
 std::atomic<int> g_translated{0}, g_failed{0};
 // DEPURACIÓN: huellas distintas traducidas. Si son muchas menos que las traducciones, el juego crea varios programas con
 // el mismo código y cada uno se traduce (2,5-4 ms en NvnSubmit) y lleva sus propias pipelines (ver translate_stage).
@@ -66,7 +61,7 @@ thread_local bool t_cache_only = false, t_cache_missed = false;
 
 // Cambia si cambia lo que entra en la clave de la caché (translation_key) o cómo se usa lo traducido.
 // 2: Options::optimize_stages (spirv-opt).
-// 3: butterflies by 1..3 in pixel shaders become quad swaps (runtime/eden: EmitShuffleButterfly).
+// 3: butterflies by 1..3 in pixel shaders become quad swaps (tools/patches/eden-quad-butterfly.patch).
 // 4: Options::warp_barriers.
 // 5: those quad swaps also where the other subgroup operations are off (ARM's driver).
 constexpr uint32_t kKeyVersion = 5;
@@ -283,7 +278,7 @@ bool translation_key(const nvn::ProgramStage& stage, size_t bound, const nvnshad
     h.u32(o.subgroup_operations);
     h.u32(o.broken_subgroup_shuffle);
     h.u32(o.broken_unreachable);
-    if (o.broken_pack_half) h.u32(0x48414C34);  // (only where it's on; 3: F2F.F16.F32 through it too; 4: the point size)
+    if (o.broken_pack_half) h.u32(0x48414C34);  // (only where it's on; 4: integer packing, F2F.F16.F32 and the point size)
     if (o.demote_reorder) h.u32(0x44454D4F);  // (only where it's on: other GPUs keep their keys)
     if (o.warp_barriers) h.u32(0x57415250);  // (only where it's on: other GPUs keep their keys)
     if (!o.multi_viewport) h.u32(0x4D56);  // (solo sin multiViewport: las claves de siempre no cambian)
@@ -678,14 +673,7 @@ bool translate_stage(nvn::ProgramStage& out, uint64_t previous_stores = ~0ull, i
 
 }  // namespace
 
-nvn::Program* nvn::find_program(const void* program) {
-    Program* result = nullptr;
-    g_programs.visit(program, [&](ProgramEntry& entry) {
-        entry.referenced = true;
-        result = &entry.program;
-    });
-    return result;
-}
+nvn::Program* nvn::find_program(const void* program) { return g_programs.get(program); }
 
 namespace {
 
@@ -963,6 +951,7 @@ nvn::ProgramStage::Variant nvn::geometry_variant(ProgramStage& stage, uint64_t p
     ProgramStage::Variant v;
     if (translate_stage(variant, previous_stores, input_topology)) {
         v.module = variant.module;
+        v.spirv_id = variant.spirv_id;
         v.cache_key = variant.cache_key;
     }
     return stage.variants[key] = v;
@@ -998,28 +987,27 @@ int nvn::tess_domain(const ProgramStage& control) {
 
 nvn::ProgramStage::Variant nvn::vertex_variant(ProgramStage& stage, uint64_t input_types) {
     if (auto it = stage.variants.find(input_types); it != stage.variants.end()) return it->second;
+    ProgramStage variant;
+    variant.code = stage.code;
+    variant.control = stage.control;
+    variant.constants = stage.constants;
+    variant.constants_size = stage.constants_size;
+    variant.count_check = stage.count_check;
     ProgramStage::Variant v;
-    static const bool translate_typed = NVN_FLAG("int_attribs") || (!NVN_FLAG("no_int_attribs") && vk()->props.vendorID != 0x5143);
-    if (translate_typed && stage.code && stage.control) {
-        ProgramStage variant;
-        variant.code = stage.code;
-        variant.control = stage.control;
-        variant.constants = stage.constants;
-        variant.constants_size = stage.constants_size;
-        variant.count_check = stage.count_check;
-        if (translate_stage(variant, ~0ull, 0, 0, 0, input_types) && variant.shader.resources.size() == stage.shader.resources.size()) {
-            v = {variant.module, variant.cache_key};
-        } else {
-            if (variant.module) vkDestroyShaderModule(vk()->device, variant.module, nullptr);
-            NVN_LOG("vertex %016llx: typed translation unavailable, specializing the base interface\n",
-                    static_cast<unsigned long long>(stage.print));
+    // (los mismos recursos, o el layout no valdría; con otros tipos solo cambian las entradas)
+    if (translate_stage(variant, ~0ull, 0, 0, 0, input_types)) {
+        if (variant.shader.resources.size() == stage.shader.resources.size()) {
+            v.module = variant.module;
+            v.spirv_id = variant.spirv_id;
+            v.cache_key = variant.cache_key;
+        } else if (variant.module) {
+            vkDestroyShaderModule(nvn::vk()->device, variant.module, nullptr);
         }
     }
-    if (!v.module) {
-        if (create_fetch_module(vk()->device, stage.shader.spirv, input_types, &v.module) != VK_SUCCESS) return {};
-        // The record stores the source module; the pipeline's vertex layout specializes it on replay.
-        v.cache_key = stage.cache_key;
-    }
+    static int logged = 0;
+    if (logged++ < 8)
+        NVN_LOG("vertex %016llx with integer attributes (types 0x%llx): variant%s\n", static_cast<unsigned long long>(stage.print),
+                static_cast<unsigned long long>(input_types), v.module ? "" : " (failed: using the plain one)");
     return stage.variants[input_types] = v;
 }
 
@@ -1037,6 +1025,7 @@ nvn::ProgramStage::Variant nvn::safe_variant(ProgramStage& stage, uint64_t previ
     if (translate_stage(variant, previous_stores, 0, 0, level, input_types)) {
         if (variant.shader.resources.size() == stage.shader.resources.size()) {
             v.module = variant.module;
+            v.spirv_id = variant.spirv_id;
             v.cache_key = variant.cache_key;
         } else if (variant.module) {
             vkDestroyShaderModule(nvn::vk()->device, variant.module, nullptr);
@@ -1148,15 +1137,6 @@ VkResult nvn::create_shader_module(VkDevice device, const std::vector<uint32_t>&
     return vkCreateShaderModule(device, &info, nullptr, module);
 }
 
-VkResult nvn::create_fetch_module(VkDevice device, const std::vector<uint32_t>& spirv, uint64_t types, VkShaderModule* module) {
-    std::vector<uint32_t> specialized;
-    if (!specialize_vertex_fetch(spirv, types, specialized)) {
-        NVN_LOG("incompatible SPIR-V vertex interface for fetch types %016llx\n", static_cast<unsigned long long>(types));
-        return VK_ERROR_INITIALIZATION_FAILED;
-    }
-    return create_shader_module(device, specialized.empty() ? spirv : specialized, module);
-}
-
 uint64_t nvn::spirv_identity(const nvnshader::Translated& t) {
     uint64_t h = 0x84222325cbf29ce4ULL;
     auto mix = [&h](uint64_t w) {
@@ -1196,39 +1176,6 @@ void nvn::dump_stage_code(const ProgramStage& stage, const std::string& name) {
     if (stage.control) dump_code(reinterpret_cast<uint64_t>(stage.control), name + "_ctrl");
 }
 
-namespace {
-std::mutex g_retired_mutex;
-std::vector<VkShaderModule> g_retired;
-}  // namespace
-
-void nvn::retire_shader_module(VkShaderModule module) {
-    if (!module) return;
-    std::lock_guard lock(g_retired_mutex);
-    g_retired.push_back(module);
-}
-
-void nvn::destroy_retired_modules() {
-    std::vector<VkShaderModule> modules;
-    {
-        std::lock_guard lock(g_retired_mutex);
-        modules.swap(g_retired);
-    }
-    for (VkShaderModule m : modules) vkDestroyShaderModule(vk()->device, m, nullptr);
-}
-
-// (Since the merge these went straight to vkDestroyShaderModule, with a pipeline worker possibly compiling from them:
-// a use-after-free in the driver, which on an Adreno 732 segfaulted inside Qualcomm's compiler on PipelinesAsync)
-static void release_program_stages(nvn::Program& program) {
-    auto release = [](VkShaderModule module) { nvn::retire_shader_module(module); };
-    for (const auto& stage : program.stages) {
-        release(stage.module);
-        release(stage.stripped_module);
-        for (const auto& entry : stage.variants) release(entry.second.module);
-        for (const auto& entry : stage.safe_variants) release(entry.second.module);
-    }
-    program.stages.clear();
-}
-
 extern "C" {
 
 nvn::Boolean nvnProgramInitialize(void* program, void*) {
@@ -1237,33 +1184,31 @@ nvn::Boolean nvnProgramInitialize(void* program, void*) {
     return 1;
 }
 void nvnProgramFinalize(void* program) {
-    std::lock_guard lock(nvn::executor_mutex());
-    if (auto entry = g_programs.take(program)) release_program_stages(entry->program);
+    if (nvn::Program* p = g_programs.get(program))
+        for (nvn::ProgramStage& s : p->stages) {
+            if (s.module) vkDestroyShaderModule(nvn::vk()->device, s.module, nullptr);
+            if (s.stripped_module) vkDestroyShaderModule(nvn::vk()->device, s.stripped_module, nullptr);
+        }
+    g_programs.destroy(program);
 }
 
 nvn::Boolean nvnProgramSetShaders(void* program, int count, const ShaderData* stages) {
-    if (count < 0 || (count && !stages)) return 0;
-    static std::atomic<uint64_t> serial{0};
-    auto install = [&](ProgramEntry& entry) {
-        entry.program.stages.resize(count);
-        for (int k = 0; k < count; ++k) {
-            entry.program.stages[k].code = stages[k].code;
-            entry.program.stages[k].control = stages[k].control;
-        }
-        entry.program.generation = ++serial;
-    };
-    bool installed = false;
-    if (!g_programs.visit(program, [&](ProgramEntry& entry) {
-        if (!entry.referenced) { install(entry); installed = true; }
-    })) return 0;
-    if (!installed) {
-        std::lock_guard lock(nvn::executor_mutex());
-        auto* entry = g_programs.get(program);
-        if (!entry) return 0;
-        release_program_stages(entry->program);
-        install(*entry);
+    nvn::Program* p = g_programs.get(program);
+    if (!p) return 0;
+    for (nvn::ProgramStage& s : p->stages) {
+        if (s.module) vkDestroyShaderModule(nvn::vk()->device, s.module, nullptr);
+        if (s.stripped_module) vkDestroyShaderModule(nvn::vk()->device, s.stripped_module, nullptr);
     }
-    for (int k = 0; k < count; ++k) prefetch(stages[k].code, stages[k].control);
+    p->stages.clear();
+    p->stages.resize(count);
+    // Solo se apunta la dirección: el juego puede terminar de escribir el código después (NVN lo lee
+    // al dibujar), así que la etapa es del executor la primera vez que se enlaza; la precarga la deja traducida antes.
+    for (int k = 0; k < count; k++) p->stages[k].code = stages[k].code, p->stages[k].control = stages[k].control;
+    for (int k = 0; k < count; k++) prefetch(stages[k].code, stages[k].control);  // traducidas antes del primer draw
+    // Única en toda la ejecución: un Program nuevo puede reutilizar la memoria de otro ya finalizado, y las
+    // cachés del ejecutor (pipelines, layouts, sets) van por (ProgramStage*, generación).
+    static std::atomic<uint64_t> serial{0};
+    p->generation = ++serial;
     return 1;
 }
 void nvnProgramSetDebugLabel(void*, const char*) {}

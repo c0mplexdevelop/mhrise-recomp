@@ -539,12 +539,6 @@ final class SettingsMenu {
                         + "less heat). Off by default: if graphics glitch with it on, turn it off. Applies at once.",
                         "狩猎中游戏的许多 GPU 屏障只要求先画完像素。开启后这些屏障只等待像素部分，而不是整个 GPU（等待更少，发热略低）。默认关闭，若开启后画面异常可关闭。立即生效。"),
                 "barrier_bits", false);
-        flag(tr("Fast textures", "快速纹理"),
-                tr("For speed over accuracy: each draw's textures are looked up by where the game keeps them ("
-                        + "not what they are now), and textures the CPU rewrites are checked every other frame. Less CPU time "
-                        + "in busy places, but old glitches can come back: blood as big patches, magnified particles, a texture "
-                        + "a frame late. Applies at once.", "以准确性换取速度：按游戏存放纹理的位置查找每次绘制的纹理，CPU 改写的纹理隔帧检查。人多的场景 CPU 负担更低，但旧问题可能重现：血迹变成大块、粒子被放大、纹理晚一帧更新。立即生效。"),
-                "fast_textures", false);
         exclusive(tr("Pipeline worker threads", "管线编译线程数"),
                 tr("Threads available to build GPU pipelines. More can finish shader warm-up sooner. "
                         + "A draw waits if its pipeline is still being built. Takes effect on the next start.", "可用于编译 GPU 管线的线程数。增加线程可加快预热；绘制仍会等待正在构建的管线。下次启动生效。"),
